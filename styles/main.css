@@ -1,0 +1,49 @@
+body {
+  font-family: 'Open Sans', sans-serif;
+}
+
+.content {
+  width: 550px;
+}
+
+.purple {
+  background: #6441a5;
+  color: #fff;
+}
+
+.fa-twitch {
+  font-size: 50px;
+  padding-top: 12px;
+}
+
+.heading {
+  margin: 10px 0 20px;
+}
+
+.online {
+  color: #5cb85c;
+}
+
+.offline {
+  color: #d9534f;
+}
+
+.streamers {
+  padding: 25px;
+}
+
+li .list-unstyled {
+  padding-left: 25px;
+}
+
+li {
+  position: relative;
+}
+
+.fa-times {
+  position: absolute;
+  left: -15px;
+  top: 2px;
+  color: #ccc;
+  cursor: pointer;
+}
