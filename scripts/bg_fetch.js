@@ -8,36 +8,15 @@ function fetch_feed(usernames, callback) {
   };
   $.getJSON( "https://api.twitch.tv/kraken/streams?offset=0&limit=100&channel="+usernamesString, function(response) {
       var streams = response.streams;
-
       for (var i = streams.length - 1; i >= 0; i--) {
-        var stream = streams[i]
+        var stream = streams[i];
 
         stream.username = stream.channel.name;
 
         var status = cache[stream.channel.name];
 
         if(!status){
-          var xhr = new XMLHttpRequest();
-          xhr.open('GET', "http://friss.me/dev/twitch/imagegrabber.php?url="+stream.preview.large, true);
-          xhr.responseType = 'blob';
-          xhr.onload = function(e) {
-            var opt = {
-              type: "image",
-              title: stream.channel.display_name+" playing "+stream.game,
-              message: stream.channel.status,
-              iconUrl: 'images/icon_128.png',
-              imageUrl: window.URL.createObjectURL(this.response),
-              buttons: [
-                {
-                  "title": "View Stream"
-                }
-              ]
-            }
-
-            chrome.notifications.create("", opt, function(id){notifications[id]=stream.username;});
-          };
-
-          xhr.send();
+          createNotification(stream);
         }
 
         cache[stream.username] = true;
@@ -56,6 +35,30 @@ function fetch_feed(usernames, callback) {
 
       callback(streams);
   });
+}
+
+function createNotification (stream) {
+  var xhr = new XMLHttpRequest();
+  xhr.open('GET', "http://friss.me/dev/twitch/imagegrabber.php?url="+stream.preview.large, true);
+  xhr.responseType = 'blob';
+  xhr.onload = function(e) {
+    var opt = {
+      type: "image",
+      title: stream.channel.display_name+" playing "+stream.game,
+      message: stream.channel.status,
+      iconUrl: 'images/icon_128.png',
+      imageUrl: window.URL.createObjectURL(this.response),
+      buttons: [
+        {
+          "title": "View Stream"
+        }
+      ]
+    }
+
+    chrome.notifications.create(stream.username, opt, function(id){notifications[id]=stream.username;});
+  };
+
+  xhr.send();
 }
 
 
@@ -81,11 +84,7 @@ var pollInterval = 1000 * 60; // 1 minute, in milliseconds
 function poller(){
     chrome.storage.sync.get('twitchStreams', function(storage){
       if(storage.twitchStreams){
-        var len = storage.twitchStreams.length;
-        for (var i = 0; i < len; i++){
-          stream = storage.twitchStreams[i];
-          fetch_feed(stream, function(){})
-        }
+        fetch_feed(storage.twitchStreams, function(){})
       }
       window.setTimeout(poller, pollInterval);
     });
