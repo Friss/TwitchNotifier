@@ -6,7 +6,8 @@ function fetch_feed(usernames, callback) {
   for (var i = usernames.length - 1; i >= 0; i--) {
     usernamesString += usernames[i]+","
   };
-  $.getJSON( "https://api.twitch.tv/kraken/streams?offset=0&limit=100&channel="+usernamesString, function(response) {
+  if(usernamesString !== ""){
+    $.getJSON( "https://api.twitch.tv/kraken/streams?offset=0&limit=100&channel="+usernamesString, function(response) {
       var streams = response.streams;
       for (var i = streams.length - 1; i >= 0; i--) {
         var stream = streams[i];
@@ -34,7 +35,8 @@ function fetch_feed(usernames, callback) {
       }
 
       callback(streams);
-  });
+    });
+  }
 }
 
 function createNotification (stream) {
@@ -56,6 +58,7 @@ function createNotification (stream) {
     }
 
     chrome.notifications.create(stream.username, opt, function(id){notifications[id]=stream.username;});
+    mixpanel.track("Notification: Create Notification");
   };
 
   xhr.send();
@@ -65,6 +68,7 @@ function createNotification (stream) {
 function handleClick (id) {
   var url = "http://twitch.tv/"+notifications[id];
   chrome.tabs.create({ url: url });
+  mixpanel.track("Notification: View Stream");
 }
 
 
