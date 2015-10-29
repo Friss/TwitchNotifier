@@ -7,7 +7,7 @@ function fetch_feed(usernames, callback) {
     usernamesString += usernames[i]+","
   };
   if(usernamesString !== ""){
-    $.getJSON( "https://api.twitch.tv/kraken/streams?offset=0&limit=100&channel="+usernamesString, function(response) {
+    $.getJSON( "https://api.twitch.tv/kraken/streams?offset=0&limit=500&channel="+usernamesString, function(response) {
       var streams = response.streams;
       for (var i = streams.length - 1; i >= 0; i--) {
         var stream = streams[i];
