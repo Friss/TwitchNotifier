@@ -57,7 +57,7 @@ function createNotification (stream) {
       ]
     }
 
-    chrome.notifications.create(stream.username, opt, function(id){notifications[id]=stream.username;});
+    chrome.notifications.create(getRandomToken(), opt, function(id){notifications[id]=stream.username;});
     mixpanel.track("Notification: Create Notification");
   };
 
@@ -121,8 +121,12 @@ chrome.storage.sync.get('userid', function(items) {
     function useToken(userid) {
       mixpanel.identify(userid);
       chrome.storage.sync.get('twitchStreams', function(storage) {
+        var streamersFollow = 0;
+        if (storage.twitchStreams) {
+          streamersFollow = storage.twitchStreams.length;
+        }
         mixpanel.people.set({
-          "streamersFollow": storage.twitchStreams.length
+          "streamersFollow": streamersFollow
         });
       });
     }
