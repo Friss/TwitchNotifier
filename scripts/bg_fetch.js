@@ -57,7 +57,7 @@ function createNotification (stream) {
       ]
     }
 
-    chrome.notifications.create(getRandomToken(), opt, function(id){notifications[id]=stream.username;});
+    chrome.notifications.create(Math.random().toString(36), opt, function(id){notifications[id]=stream.username;});
     mixpanel.track("Notification: Create Notification");
   };
 
