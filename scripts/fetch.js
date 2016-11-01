@@ -15,7 +15,10 @@ function fetch_feed(storage) {
 
 function display_stories(streams) {
   mixpanel.track("Popup: Show Popup");
-  for (var i = streams.length - 1; i >= 0; i--) {
+  if (!streams) {
+    return;
+  }
+  for (var i = 0; i < streams.length; i++) {
     var json = streams[i]
     var $user = $('li[data-username="'+json.username+'"]');
     if (json.channel){
