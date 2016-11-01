@@ -1,13 +1,17 @@
 var cache = {};
 var notifications = {};
 
-function fetch_feed(usernames, callback) {
+function fetch_feed(usernames, callback, offset) {
+  if (!offset) {
+    offset = 0;
+  }
+
   var usernamesString = "";
   for (var i = usernames.length - 1; i >= 0; i--) {
     usernamesString += usernames[i]+","
   };
   if(usernamesString !== ""){
-    $.getJSON( "https://api.twitch.tv/kraken/streams?offset=0&limit=500&channel="+usernamesString, function(response) {
+    $.getJSON( "https://api.twitch.tv/kraken/streams?offset=0&limit=100&offset=" + offset + "&client_id=lsi25ppcsjm9cqenz31hg8h11mmq0n9&channel="+usernamesString, function(response) {
       var streams = response.streams;
       for (var i = streams.length - 1; i >= 0; i--) {
         var stream = streams[i];
@@ -34,6 +38,10 @@ function fetch_feed(usernames, callback) {
         };
       }
 
+      if (response._total > 100) {
+        fetch_feed(usernames, callback, offset + 100);
+      }
+
       callback(streams);
     });
   }
@@ -41,7 +49,7 @@ function fetch_feed(usernames, callback) {
 
 function createNotification (stream) {
   var xhr = new XMLHttpRequest();
-  xhr.open('GET', "http://friss.me/dev/twitch/imagegrabber.php?url="+stream.preview.large, true);
+  xhr.open('GET', "https://friss.me/dev/twitch/imagegrabber.php?url="+stream.preview.large, true);
   xhr.responseType = 'blob';
   xhr.onload = function(e) {
     var opt = {
