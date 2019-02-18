@@ -17,6 +17,8 @@ const fetchStreamerStatus = storage => {
         displayStreamerStatus(response);
       }
     );
+  } else {
+    displayStreamerStatus();
   }
 };
 
@@ -151,29 +153,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  document.getElementById('streamers').addEventListener('click', evt => {
-    if (evt.target.classList.contains('remove')) {
-      const parent = evt.target.parentElement;
-      const streamer = parent.getAttribute('data-username');
-      chrome.storage.sync.get('twitchStreams', storage => {
-        const index = storage.twitchStreams.indexOf(streamer);
-        if (index >= 0) {
-          storage.twitchStreams.splice(index, 1);
-        }
-        chrome.storage.sync.set(
-          { twitchStreams: storage.twitchStreams },
-          () => {
-            if (parent.classList.contains('col-xs-6')) {
-              parent.parentElement.remove();
-            } else {
-              parent.remove();
-            }
-          }
-        );
-      });
-    }
-  });
-
   document.body.addEventListener('click', evt => {
     if (evt.target.nodeName === 'A') {
       if (evt.target.classList.contains('twitch-link')) {
@@ -187,6 +166,31 @@ document.addEventListener('DOMContentLoaded', () => {
           document.getElementById('streamers').innerHTML = '';
         });
       }
+    }
+
+    if (evt.target.classList.contains('remove')) {
+      let parent = evt.target.parentElement;
+
+      if (parent.classList.contains('col-xs-6')) {
+        parent = parent.parentElement.parentElement;
+      }
+
+      const streamer = parent.getAttribute('data-username');
+
+      chrome.storage.sync.get('twitchStreams', storage => {
+        const index = storage.twitchStreams.indexOf(streamer);
+
+        if (index >= 0) {
+          storage.twitchStreams.splice(index, 1);
+        }
+
+        chrome.storage.sync.set(
+          { twitchStreams: storage.twitchStreams },
+          () => {
+            parent.remove();
+          }
+        );
+      });
     }
   });
 
