@@ -36,6 +36,11 @@ const fetchLiveStreamers = async request => {
       streamersToFetch.push(channel);
       return;
     }
+
+    if (streamersCache.offline) {
+      return;
+    }
+
     streamersResponse[channel] = streamersCache.data;
   });
 
@@ -69,6 +74,17 @@ const fetchLiveStreamers = async request => {
         expires: NOW + 60000,
       };
     });
+  });
+
+  streamersToFetch.forEach(streamer => {
+    if (streamersResponse[streamer]) {
+      return;
+    }
+
+    GLOBAL_TWITCH_CACHE[streamer] = {
+      expires: NOW + 60000,
+      offline: true,
+    };
   });
 
   return new Response(JSON.stringify(streamersResponse), RESPONSE_HEADERS);

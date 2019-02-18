@@ -1,4 +1,5 @@
 let hideOffline = false;
+let hidePreviews = false;
 
 const fetchStreamerStatus = storage => {
   if (!storage.twitchStreams) {
@@ -31,23 +32,6 @@ const sortStreams = (streamA, streamB) => {
   return 0;
 };
 
-const formatDate = timestamp => {
-  const now = new Date();
-  const startTime = new Date(timestamp);
-
-  let dateString = '';
-
-  if (now.getDay() > startTime.getDay()) {
-    return `Yesterday at ${Math.abs(startTime.getHours() - 12)}:${Math.abs(
-      startTime.getMinutes() - 60
-    )}`;
-  }
-
-  return `Today at ${Math.abs(startTime.getHours() - 12)}:${Math.abs(
-    startTime.getMinutes() - 60
-  )}`;
-};
-
 const createStreamerEntry = stream => {
   if (!stream.channel) {
     if (hideOffline) {
@@ -61,9 +45,15 @@ const createStreamerEntry = stream => {
       }'>${stream.username}</a>
     `;
   } else {
+    const imageDiv = `
+      <div class="col-xs-6">
+        <img class="img-responsive" src="${stream.preview.medium}" />
+      </div>
+    `;
+
     return `
       <div class="row streamer-online">
-        <div class="col-xs-6">
+        <div class="${hidePreviews ? 'col-xs-12' : 'col-xs-6'}">
           <i class='fa fa-times remove'></i>
           <i class='fa fa-video-camera'></i>
           <a class='online twitch-link' href='http://twitch.tv/${
@@ -86,9 +76,7 @@ const createStreamerEntry = stream => {
             </li>
           </ul>
         </div>
-        <div class="col-xs-6">
-          <img class="img-responsive" src="${stream.preview.medium}" />
-        </div>
+        ${hidePreviews ? '' : imageDiv}
       </div>
     `;
   }
@@ -116,11 +104,18 @@ const displayStreamerStatus = streams => {
 };
 
 document.addEventListener('DOMContentLoaded', () => {
-  chrome.storage.sync.get('hideOffline', storage => {
-    hideOffline = storage.hideOffline;
-    document.getElementById('hideOffline').checked = hideOffline;
-    chrome.storage.sync.get('twitchStreams', fetchStreamerStatus);
-  });
+  chrome.storage.sync.get(
+    ['hideOffline', 'hidePreviews', 'twitchStreams'],
+    storage => {
+      hideOffline = storage.hideOffline;
+      document.getElementById('hideOffline').checked = hideOffline;
+
+      hidePreviews = storage.hidePreviews;
+      document.getElementById('hidePreviews').checked = hidePreviews;
+
+      fetchStreamerStatus(storage);
+    }
+  );
 
   document.getElementById('addForm').addEventListener('submit', evt => {
     evt.preventDefault();
@@ -168,7 +163,11 @@ document.addEventListener('DOMContentLoaded', () => {
         chrome.storage.sync.set(
           { twitchStreams: storage.twitchStreams },
           () => {
-            parent.remove();
+            if (parent.classList.contains('col-xs-6')) {
+              parent.parentElement.remove();
+            } else {
+              parent.remove();
+            }
           }
         );
       });
@@ -194,6 +193,13 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('hideOffline').addEventListener('change', evt => {
     chrome.storage.sync.set({ hideOffline: evt.target.checked }, () => {
       hideOffline = evt.target.checked;
+      chrome.storage.sync.get('twitchStreams', fetchStreamerStatus);
+    });
+  });
+
+  document.getElementById('hidePreviews').addEventListener('change', evt => {
+    chrome.storage.sync.set({ hidePreviews: evt.target.checked }, () => {
+      hidePreviews = evt.target.checked;
       chrome.storage.sync.get('twitchStreams', fetchStreamerStatus);
     });
   });
