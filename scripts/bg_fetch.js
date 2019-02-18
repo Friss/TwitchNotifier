@@ -1,141 +1,125 @@
-var cache = {};
-var notifications = {};
+const knownOnlineStreamers = {};
+const notifications = {};
+const CHANNEL_API_URI = 'https://twitch.theorycraft.gg/channel-status';
+const FOLLOW_API_URI = 'https://twitch.theorycraft.gg/user-follows';
 
-function fetch_feed(usernames, callback, offset) {
-  if (!offset) {
-    offset = 0;
+const asyncForEach = async (array, callback) => {
+  for (let index = 0; index < array.length; index++) {
+    await callback(array[index], index, array);
   }
+};
 
-  var usernamesString = "";
-  for (var i = usernames.length - 1; i >= 0; i--) {
-    usernamesString += usernames[i]+","
-  };
-  if(usernamesString !== ""){
-    $.getJSON( "https://api.twitch.tv/kraken/streams?offset=0&limit=100&offset=" + offset + "&client_id=lsi25ppcsjm9cqenz31hg8h11mmq0n9&channel="+usernamesString, function(response) {
-      var streams = response.streams;
-      for (var i = streams.length - 1; i >= 0; i--) {
-        var stream = streams[i];
+const fetchStreamerStatus = async (
+  usernames,
+  callback,
+  sendNotification = true
+) => {
+  const response = await fetch(CHANNEL_API_URI, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({
+      channels: usernames,
+    }),
+  });
 
-        stream.username = stream.channel.name;
+  const streamersLive = await response.json();
 
-        var status = cache[stream.channel.name];
-
-        if(!status){
-          createNotification(stream);
-        }
-
-        cache[stream.username] = true;
-        var index = usernames.indexOf(stream.username);
-        if (index > -1) {
-          usernames.splice(index, 1);
-        }
-      };
-
-      if (usernames.length){
-        for (var i = usernames.length - 1; i >= 0; i--) {
-          cache[usernames[i]] = false;
-          streams.push({"username": usernames[i]})
-        };
-      }
-
-      if (response._total > 100) {
-        fetch_feed(usernames, callback, offset + 100);
-      }
-
-      callback(streams);
-    });
-  }
-}
-
-function createNotification (stream) {
-  var xhr = new XMLHttpRequest();
-  xhr.open('GET', "https://friss.me/dev/twitch/imagegrabber.php?url="+stream.preview.large, true);
-  xhr.responseType = 'blob';
-  xhr.onload = function(e) {
-    var opt = {
-      type: "image",
-      title: stream.channel.display_name+" playing "+stream.game,
-      message: stream.channel.status,
-      iconUrl: 'images/icon_128.png',
-      imageUrl: window.URL.createObjectURL(this.response),
-      buttons: [
-        {
-          "title": "View Stream"
-        }
-      ]
+  Object.keys(knownOnlineStreamers).forEach(streamer => {
+    if (!streamersLive[streamer]) {
+      knownOnlineStreamers[streamer] = false;
     }
+  });
 
-    chrome.notifications.create(Math.random().toString(36), opt, function(id){notifications[id]=stream.username;});
-    mixpanel.track("Notification: Create Notification");
+  await asyncForEach(Object.keys(streamersLive), async streamer => {
+    const streamData = streamersLive[streamer];
+    const alreadySentNotification = knownOnlineStreamers[streamer];
+    if (!alreadySentNotification) {
+      knownOnlineStreamers[streamer] = true;
+      if (sendNotification) {
+        await createNotification(streamData);
+      }
+    }
+  });
+
+  const hydratedData = usernames.map(username => {
+    return streamersLive[username] || { username };
+  });
+
+  callback(hydratedData);
+};
+
+const fetchFollows = async (username, callback) => {
+  const response = await fetch(`${FOLLOW_API_URI}/${username}`, {
+    headers: {
+      Accept: 'application/json',
+    },
+  });
+  const followers = await response.json();
+
+  chrome.storage.sync.get('twitchStreams', async storage => {
+    if (storage.twitchStreams) {
+      const twitchStreams = Array.from(
+        new Set(storage.twitchStreams.concat(followers.follows))
+      );
+      chrome.storage.sync.set({ twitchStreams }, () => {
+        fetchStreamerStatus(twitchStreams, callback, false);
+      });
+    }
+  });
+};
+
+const createNotification = async stream => {
+  const imageResponse = await fetch(stream.preview.large);
+  const imageData = await imageResponse.blob();
+
+  var opt = {
+    type: 'image',
+    title: stream.channel.display_name + ' playing ' + stream.game,
+    message: stream.channel.status,
+    iconUrl: 'images/icon_128.png',
+    imageUrl: window.URL.createObjectURL(imageData),
+    buttons: [
+      {
+        title: 'View Stream',
+      },
+    ],
   };
 
-  xhr.send();
-}
+  chrome.notifications.create(Math.random().toString(36), opt, id => {
+    notifications[id] = stream.username;
+  });
+};
 
-
-function handleClick (id) {
-  var url = "http://twitch.tv/"+notifications[id];
+const handleClick = id => {
+  var url = 'http://twitch.tv/' + notifications[id];
   chrome.tabs.create({ url: url });
-  mixpanel.track("Notification: View Stream");
-}
+};
 
-
-function onRequest(request, sender, callback) {
-  if (request.action == 'fetch_feed') {
-        fetch_feed(request.usernames, callback);
-      }
-}
+const onRequest = (request, sender, callback) => {
+  if (request.action == 'fetchStreamerStatus') {
+    fetchStreamerStatus(request.usernames, callback);
+  } else if (request.action === 'fetchFollows') {
+    fetchFollows(request.username, callback);
+  }
+};
 
 // Wire up the listener.
 chrome.extension.onRequest.addListener(onRequest);
 chrome.notifications.onClicked.addListener(handleClick);
-chrome.notifications.onButtonClicked.addListener(handleClick)
+chrome.notifications.onButtonClicked.addListener(handleClick);
 
 var pollInterval = 1000 * 60; // 1 minute, in milliseconds
 
-function poller(){
-    chrome.storage.sync.get('twitchStreams', function(storage){
-      if(storage.twitchStreams){
-        fetch_feed(storage.twitchStreams, function(){})
-      }
-      window.setTimeout(poller, pollInterval);
-    });
-}
+const poller = async () => {
+  chrome.storage.sync.get('twitchStreams', async storage => {
+    if (storage.twitchStreams) {
+      await fetchStreamerStatus(storage.twitchStreams, () => {});
+    }
+    window.setTimeout(poller, pollInterval);
+  });
+};
 
 window.setTimeout(poller, pollInterval);
-
-function getRandomToken() {
-    // E.g. 8 * 32 = 256 bits token
-    var randomPool = new Uint8Array(32);
-    crypto.getRandomValues(randomPool);
-    var hex = '';
-    for (var i = 0; i < randomPool.length; ++i) {
-        hex += randomPool[i].toString(16);
-    }
-    // E.g. db18458e2782b2b77e36769c569e263a53885a9944dd0a861e5064eac16f1a
-    return hex;
-}
-
-chrome.storage.sync.get('userid', function(items) {
-    var userid = items.userid;
-    if (userid) {
-        useToken(userid);
-    } else {
-        userid = getRandomToken();
-        chrome.storage.sync.set({userid: userid}, function() {
-            useToken(userid);
-        });
-    }
-    function useToken(userid) {
-      mixpanel.identify(userid);
-      chrome.storage.sync.get('twitchStreams', function(storage) {
-        var streamersFollow = 0;
-        if (storage.twitchStreams) {
-          streamersFollow = storage.twitchStreams.length;
-        }
-        mixpanel.people.set({
-          "streamersFollow": streamersFollow
-        });
-      });
-    }
-});

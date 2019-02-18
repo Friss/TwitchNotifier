@@ -47,3 +47,11 @@ li {
   color: #ccc;
   cursor: pointer;
 }
+
+.streamer-online {
+  margin-bottom: 20px;
+}
+
+.remove-all {
+  position: relative;
+}
