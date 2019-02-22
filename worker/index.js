@@ -18,6 +18,10 @@ const userApi = userName => {
   return `https://api.twitch.tv/kraken/users/${userName}/follows/channels?limit=100`;
 };
 
+const previewUrl = (userName, width, height) => {
+  return `https://static-cdn.jtvnw.net/previews-ttv/live_user_${userName}-${width}x${height}.jpg`;
+};
+
 const fetchLiveStreamers = async request => {
   const streamersRequested = await request.json();
   const streamersToFetch = [];
@@ -124,10 +128,20 @@ const fetchUserFollows = async (request, requestUrl) => {
   );
 };
 
-// We support the GET, POST, HEAD, and OPTIONS methods from any origin,
-// and accept the Content-Type header on requests. These headers must be
-// present on all responses to all CORS requests. In practice, this means
-// all responses to OPTIONS requests.
+const handlePreviewImage = async url => {
+  const [_, __, userName, width, height] = url.pathname.split('/');
+  const response = await fetch(previewUrl(userName, width, height));
+
+  const imageResponse = new Response(response.body, response);
+  Object.keys(CORS_HEADERS).forEach(key => {
+    imageResponse.headers.set(key, CORS_HEADERS[key]);
+    imageResponse.headers.delete('x-served-by');
+    imageResponse.headers.delete('set-cookie');
+  });
+
+  return imageResponse;
+};
+
 const handleOptions = request => {
   if (
     request.headers.get('Origin') !== null &&
@@ -165,9 +179,14 @@ const handleRequest = async request => {
     return fetchLiveStreamers(request);
   } else if (
     request.method === 'GET' &&
-    requestPathName.indexOf('/user-follows') === 0
+    requestPathName.startsWith('/user-follows')
   ) {
     return fetchUserFollows(request, requestUrl);
+  } else if (
+    request.method === 'GET' &&
+    requestPathName.startsWith('/channel-preview')
+  ) {
+    return handlePreviewImage(requestUrl);
   }
 
   return new Response(null, {

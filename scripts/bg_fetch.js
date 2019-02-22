@@ -2,6 +2,7 @@ const knownOnlineStreamers = {};
 const notifications = {};
 const CHANNEL_API_URI = 'https://twitch.theorycraft.gg/channel-status';
 const FOLLOW_API_URI = 'https://twitch.theorycraft.gg/user-follows';
+const PREVIEW_API = 'https://twitch.theorycraft.gg/channel-preview';
 
 const asyncForEach = async (array, callback) => {
   for (let index = 0; index < array.length; index++) {
@@ -72,7 +73,9 @@ const fetchFollows = async (username, callback) => {
 };
 
 const createNotification = async stream => {
-  const imageResponse = await fetch(stream.preview.large);
+  const imageResponse = await fetch(
+    `${PREVIEW_API}/${stream.username}/640/360`
+  );
   const imageData = await imageResponse.blob();
 
   var opt = {
@@ -116,7 +119,9 @@ var pollInterval = 1000 * 60; // 1 minute, in milliseconds
 const poller = async () => {
   chrome.storage.sync.get('twitchStreams', async storage => {
     if (storage.twitchStreams) {
-      await fetchStreamerStatus(storage.twitchStreams, () => {});
+      try {
+        await fetchStreamerStatus(storage.twitchStreams, () => {});
+      } catch (e) {}
     }
     window.setTimeout(poller, pollInterval);
   });

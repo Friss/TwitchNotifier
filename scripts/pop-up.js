@@ -1,3 +1,4 @@
+const PREVIEW_API = 'https://twitch.theorycraft.gg/channel-preview';
 let hideOffline = false;
 let hidePreviews = false;
 
@@ -49,7 +50,9 @@ const createStreamerEntry = stream => {
   } else {
     const imageDiv = `
       <div class="col-xs-6">
-        <img class="img-responsive" src="${stream.preview.medium}" />
+        <img class="img-responsive" src="${PREVIEW_API}/${
+      stream.username
+    }/320/180" />
       </div>
     `;
 
