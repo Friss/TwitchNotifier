@@ -36,14 +36,20 @@ const fetchStreamerStatus = async (
   });
 
   const numOnline = Object.keys(streamersLive).length;
-  if (numOnline && setBadgeText) {
-    chrome.browserAction.setBadgeText({
-      text: `${numOnline}`,
-    });
+  if (setBadgeText) {
+    if (numOnline > 0) {
+      chrome.browserAction.setBadgeText({
+        text: `${numOnline}`,
+      });
+    } else {
+      chrome.browserAction.setBadgeText({
+        text: '',
+      });
+    }
   }
 
   chrome.browserAction.setTitle({
-    title: `${numOnline} streamers online. ${Object.keys(streamersLive).join(
+    title: `${numOnline} channels online. ${Object.keys(streamersLive).join(
       ', '
     )}`,
   });
