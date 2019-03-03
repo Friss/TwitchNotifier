@@ -3,6 +3,7 @@ const notifications = {};
 const CHANNEL_API_URI = 'https://twitch.theorycraft.gg/channel-status';
 const FOLLOW_API_URI = 'https://twitch.theorycraft.gg/user-follows';
 const PREVIEW_API = 'https://twitch.theorycraft.gg/channel-preview';
+let setBadgeText;
 
 const asyncForEach = async (array, callback) => {
   for (let index = 0; index < array.length; index++) {
@@ -32,6 +33,19 @@ const fetchStreamerStatus = async (
     if (!streamersLive[streamer]) {
       knownOnlineStreamers[streamer] = false;
     }
+  });
+
+  const numOnline = Object.keys(streamersLive).length;
+  if (numOnline && setBadgeText) {
+    chrome.browserAction.setBadgeText({
+      text: `${numOnline}`,
+    });
+  }
+
+  chrome.browserAction.setTitle({
+    title: `${numOnline} streamers online. ${Object.keys(streamersLive).join(
+      ', '
+    )}`,
   });
 
   await asyncForEach(Object.keys(streamersLive), async streamer => {
@@ -106,6 +120,14 @@ const onRequest = (request, sender, callback) => {
     fetchStreamerStatus(request.usernames, callback);
   } else if (request.action === 'fetchFollows') {
     fetchFollows(request.username, callback);
+  } else if (request.action === 'setBadgeText') {
+    setBadgeText = request.setBadgeText;
+    if (!setBadgeText) {
+      chrome.browserAction.setBadgeText({
+        text: '',
+      });
+    }
+    callback();
   }
 };
 
@@ -113,6 +135,10 @@ const onRequest = (request, sender, callback) => {
 chrome.extension.onRequest.addListener(onRequest);
 chrome.notifications.onClicked.addListener(handleClick);
 chrome.notifications.onButtonClicked.addListener(handleClick);
+chrome.browserAction.setBadgeBackgroundColor({ color: '#5cb85c' });
+chrome.storage.sync.get('hideStreamersOnlineCount', storage => {
+  setBadgeText = !storage.hideStreamersOnlineCount;
+});
 
 var pollInterval = 1000 * 60; // 1 minute, in milliseconds
 
@@ -128,3 +154,4 @@ const poller = async () => {
 };
 
 window.setTimeout(poller, pollInterval);
+poller();

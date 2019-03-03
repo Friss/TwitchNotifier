@@ -55,3 +55,11 @@ li {
 .remove-all {
   position: relative;
 }
+
+.spacing {
+  padding: 0px 15px;
+}
+
+.spacing .col-xs-3 {
+  padding: 0;
+}
