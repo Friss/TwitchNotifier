@@ -2,7 +2,8 @@ const knownOnlineStreamers = {};
 const notifications = {};
 const CHANNEL_API_URI = 'https://twitch.theorycraft.gg/channel-status';
 const FOLLOW_API_URI = 'https://twitch.theorycraft.gg/user-follows';
-const PREVIEW_API = 'https://twitch.theorycraft.gg/channel-preview';
+const getPreviewUrl = (userName, width, height) =>
+  `https://static-cdn.jtvnw.net/previews-ttv/live_user_${userName}-${width}x${height}.jpg`;
 let setBadgeText;
 
 const asyncForEach = async (array, callback) => {
@@ -93,12 +94,10 @@ const fetchFollows = async (username, callback) => {
 };
 
 const createNotification = async stream => {
-  const imageResponse = await fetch(
-    `${PREVIEW_API}/${stream.username}/640/360`
-  );
+  const imageResponse = await fetch(getPreviewUrl(stream.username, 640, 360));
   const imageData = await imageResponse.blob();
 
-  var opt = {
+  const opt = {
     type: 'image',
     title: stream.channel.display_name + ' playing ' + stream.game,
     message: stream.channel.status,
@@ -117,7 +116,7 @@ const createNotification = async stream => {
 };
 
 const handleClick = id => {
-  var url = 'http://twitch.tv/' + notifications[id];
+  const url = 'http://twitch.tv/' + notifications[id];
   chrome.tabs.create({ url: url });
 };
 
@@ -146,7 +145,7 @@ chrome.storage.sync.get('hideStreamersOnlineCount', storage => {
   setBadgeText = !storage.hideStreamersOnlineCount;
 });
 
-var pollInterval = 1000 * 60; // 1 minute, in milliseconds
+const pollInterval = 5000 * 60; // 5 minute, in milliseconds
 
 const poller = async () => {
   chrome.storage.sync.get('twitchStreams', async storage => {
@@ -155,9 +154,8 @@ const poller = async () => {
         await fetchStreamerStatus(storage.twitchStreams, () => {});
       } catch (e) {}
     }
-    window.setTimeout(poller, pollInterval);
   });
 };
 
-window.setTimeout(poller, pollInterval);
+window.setInterval(poller, pollInterval);
 poller();

@@ -1,4 +1,5 @@
-const PREVIEW_API = 'https://twitch.theorycraft.gg/channel-preview';
+const getPreviewUrl = (userName, width, height) =>
+  `https://static-cdn.jtvnw.net/previews-ttv/live_user_${userName}-${width}x${height}.jpg`;
 let hideOffline = false;
 let hidePreviews = false;
 let hideStreamersOnlineCount = false;
@@ -54,16 +55,16 @@ const createStreamerEntry = stream => {
 
     return `
       <i class='fa fa-times remove' data-username='${stream.username}'></i>
-      <a class='offline twitch-link' href='http://twitch.tv/${
-        stream.username
-      }'>${stream.username}</a>
+      <a class='offline twitch-link' href='http://twitch.tv/${stream.username}'>${stream.username}</a>
     `;
   } else {
     const imageDiv = `
       <div class="col-xs-6">
-        <img class="img-responsive" src="${PREVIEW_API}/${
-      stream.username
-    }/320/180" />
+        <img class="img-responsive" src="${getPreviewUrl(
+          stream.username,
+          320,
+          180
+        )}" />
       </div>
     `;
 

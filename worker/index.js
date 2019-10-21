@@ -1,4 +1,5 @@
 const STREAMS_URI = 'https://api.twitch.tv/kraken/streams?offset=0&limit=100';
+const USERS_URI = 'https://api.twitch.tv/helix/users';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -20,6 +21,15 @@ const userApi = userName => {
 
 const previewUrl = (userName, width, height) => {
   return `https://static-cdn.jtvnw.net/previews-ttv/live_user_${userName}-${width}x${height}.jpg`;
+};
+
+const fetchUserIds = async userNames => {
+  const response = await fetch(
+    `${USERS_URI}?login=${userNames.join('&login=')}`
+  );
+  const json = await response.json();
+
+  return json.data.map(user => user.id);
 };
 
 const fetchLiveStreamers = async request => {
@@ -57,7 +67,8 @@ const fetchLiveStreamers = async request => {
 
   const twitchStreamResults = await Promise.all(
     groups.map(async group => {
-      const streamersParam = `channel=${group.join(',')}`;
+      const userIds = await fetchUserIds(group);
+      const streamersParam = `channel=${userIds.join(',')}`;
 
       const api = `${STREAMS_URI}&${streamersParam}`;
 
