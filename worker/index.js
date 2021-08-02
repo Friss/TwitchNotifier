@@ -1,6 +1,5 @@
 const STREAMS_URI = 'https://api.twitch.tv/kraken/streams?offset=0&limit=100';
-const USERS_URI = 'https://api.twitch.tv/helix/users';
-
+const USERS_URI = 'https://api.twitch.tv/helix/users'
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
@@ -9,8 +8,9 @@ const CORS_HEADERS = {
 
 const GLOBAL_TWITCH_CACHE = {};
 const LIMIT = 100;
-const CLIENT_ID = 'lsi25ppcsjm9cqenz31hg8h11mmq0n9';
-const AUTH_HEADERS = { headers: { 'Client-ID': CLIENT_ID } };
+const AUTH_HEADERS = (token) => {
+  return { headers: { 'Authorization': `Bearer ${token}`, 'Client-ID': CLIENT_ID, Accept: "application/vnd.twitchtv.v5+json" } };
+};
 const RESPONSE_HEADERS = {
   headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
 };
@@ -23,14 +23,18 @@ const previewUrl = (userName, width, height) => {
   return `https://static-cdn.jtvnw.net/previews-ttv/live_user_${userName}-${width}x${height}.jpg`;
 };
 
-const fetchUserIds = async userNames => {
-  const response = await fetch(
-    `${USERS_URI}?login=${userNames.join('&login=')}`
-  );
-  const json = await response.json();
+const AUTH_TOKEN_URI = `https://id.twitch.tv/oauth2/token?client_id=${CLIENT_ID}&client_secret=${CLIENT_SECRET}&grant_type=client_credentials`
 
-  return json.data.map(user => user.id);
-};
+const fetchAuthToken = async () => {
+  const authRes = await fetch(AUTH_TOKEN_URI, {method: 'POST'}).then(res => res.json());
+  return authRes.access_token;
+}
+
+const fetchUserIds = async (userNames, authToken) => {
+  const response = await fetch(`${USERS_URI}?login=${userNames.join('&login=')}`, AUTH_HEADERS(authToken));
+  const json = await response.json();
+  return json.data.map((user) => user.id);
+}
 
 const fetchLiveStreamers = async request => {
   const streamersRequested = await request.json();
@@ -65,14 +69,16 @@ const fetchLiveStreamers = async request => {
     offset += LIMIT;
   }
 
+  const authToken = await fetchAuthToken();
+
   const twitchStreamResults = await Promise.all(
     groups.map(async group => {
-      const userIds = await fetchUserIds(group);
+      const userIds = await fetchUserIds(group, authToken);
       const streamersParam = `channel=${userIds.join(',')}`;
 
       const api = `${STREAMS_URI}&${streamersParam}`;
 
-      const response = await fetch(api, AUTH_HEADERS);
+      const response = await fetch(api, AUTH_HEADERS(authToken));
 
       return response.json();
     })
@@ -108,11 +114,14 @@ const fetchLiveStreamers = async request => {
 const fetchUserFollows = async (request, requestUrl) => {
   let allFollows = [];
   let totalFollows = Infinity;
+  const userName = requestUrl.pathname.replace('/user-follows/', '');
+  const authToken = await fetchAuthToken();
 
-  let nextUrl = userApi(requestUrl.pathname.replace('/user-follows/', ''));
+  const userId = await fetchUserIds([userName], authToken)
+  let nextUrl = userApi(userId[0]);
 
   while (allFollows.length <= totalFollows) {
-    const response = await fetch(nextUrl, AUTH_HEADERS);
+    const response = await fetch(nextUrl, AUTH_HEADERS(authToken));
     const followers = await response.json();
 
     if (
@@ -130,7 +139,7 @@ const fetchUserFollows = async (request, requestUrl) => {
       })
     );
 
-    nextUrl = followers['_links'].next;
+    nextUrl = `${nextUrl}?offset=${allFollows.length}`;
   }
 
   return new Response(
@@ -144,10 +153,10 @@ const handlePreviewImage = async url => {
   const response = await fetch(previewUrl(userName, width, height));
 
   const imageResponse = new Response(response.body, response);
+  imageResponse.headers.delete('x-served-by');
+  imageResponse.headers.delete('set-cookie');
   Object.keys(CORS_HEADERS).forEach(key => {
     imageResponse.headers.set(key, CORS_HEADERS[key]);
-    imageResponse.headers.delete('x-served-by');
-    imageResponse.headers.delete('set-cookie');
   });
 
   return imageResponse;
