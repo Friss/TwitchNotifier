@@ -11,9 +11,14 @@ body {
   color: #fff;
 }
 
-.fa-twitch {
-  font-size: 50px;
-  padding-top: 12px;
+.header {
+  display: flex;
+  vertical-align: middle;
+  height: 60px;
+}
+
+.display-flex {
+  display: flex;
 }
 
 .heading {

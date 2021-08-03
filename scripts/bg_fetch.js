@@ -30,7 +30,7 @@ const fetchStreamerStatus = async (
 
   const streamersLive = await response.json();
 
-  Object.keys(knownOnlineStreamers).forEach(streamer => {
+  Object.keys(knownOnlineStreamers).forEach((streamer) => {
     if (!streamersLive[streamer]) {
       knownOnlineStreamers[streamer] = false;
     }
@@ -55,7 +55,7 @@ const fetchStreamerStatus = async (
     )}`,
   });
 
-  await asyncForEach(Object.keys(streamersLive), async streamer => {
+  await asyncForEach(Object.keys(streamersLive), async (streamer) => {
     const streamData = streamersLive[streamer];
     const alreadySentNotification = knownOnlineStreamers[streamer];
     if (!alreadySentNotification) {
@@ -66,7 +66,7 @@ const fetchStreamerStatus = async (
     }
   });
 
-  const hydratedData = usernames.map(username => {
+  const hydratedData = usernames.map((username) => {
     return streamersLive[username] || { username };
   });
 
@@ -81,7 +81,7 @@ const fetchFollows = async (username, callback) => {
   });
   const followers = await response.json();
 
-  chrome.storage.sync.get('twitchStreams', async storage => {
+  chrome.storage.sync.get('twitchStreams', async (storage) => {
     if (storage.twitchStreams) {
       const twitchStreams = Array.from(
         new Set(storage.twitchStreams.concat(followers.follows))
@@ -93,7 +93,7 @@ const fetchFollows = async (username, callback) => {
   });
 };
 
-const createNotification = async stream => {
+const createNotification = async (stream) => {
   const imageResponse = await fetch(getPreviewUrl(stream.username, 640, 360));
   const imageData = await imageResponse.blob();
 
@@ -101,7 +101,7 @@ const createNotification = async stream => {
     type: 'image',
     title: stream.channel.display_name + ' playing ' + stream.game,
     message: stream.channel.status,
-    iconUrl: 'images/icon_128.png',
+    iconUrl: 'images/logo_128.png',
     imageUrl: window.URL.createObjectURL(imageData),
     buttons: [
       {
@@ -110,12 +110,12 @@ const createNotification = async stream => {
     ],
   };
 
-  chrome.notifications.create(Math.random().toString(36), opt, id => {
+  chrome.notifications.create(Math.random().toString(36), opt, (id) => {
     notifications[id] = stream.username;
   });
 };
 
-const handleClick = id => {
+const handleClick = (id) => {
   const url = 'http://twitch.tv/' + notifications[id];
   chrome.tabs.create({ url: url });
 };
@@ -141,14 +141,14 @@ chrome.extension.onRequest.addListener(onRequest);
 chrome.notifications.onClicked.addListener(handleClick);
 chrome.notifications.onButtonClicked.addListener(handleClick);
 chrome.browserAction.setBadgeBackgroundColor({ color: '#5cb85c' });
-chrome.storage.sync.get('hideStreamersOnlineCount', storage => {
+chrome.storage.sync.get('hideStreamersOnlineCount', (storage) => {
   setBadgeText = !storage.hideStreamersOnlineCount;
 });
 
 const pollInterval = 5000 * 60; // 5 minute, in milliseconds
 
 const poller = async () => {
-  chrome.storage.sync.get('twitchStreams', async storage => {
+  chrome.storage.sync.get('twitchStreams', async (storage) => {
     if (storage.twitchStreams) {
       try {
         await fetchStreamerStatus(storage.twitchStreams, () => {});
