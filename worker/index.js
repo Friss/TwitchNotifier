@@ -1,5 +1,5 @@
-const STREAMS_URI = 'https://api.twitch.tv/kraken/streams?offset=0&limit=100';
-const USERS_URI = 'https://api.twitch.tv/helix/users'
+const STREAMS_URI = 'https://api.twitch.tv/helix/streams?offset=0&limit=100';
+const USERS_URI = 'https://api.twitch.tv/helix/users';
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
@@ -9,13 +9,19 @@ const CORS_HEADERS = {
 const GLOBAL_TWITCH_CACHE = {};
 const LIMIT = 100;
 const AUTH_HEADERS = (token) => {
-  return { headers: { 'Authorization': `Bearer ${token}`, 'Client-ID': CLIENT_ID, Accept: "application/vnd.twitchtv.v5+json" } };
+  return {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Client-ID': CLIENT_ID,
+      Accept: 'application/vnd.twitchtv.v5+json',
+    },
+  };
 };
 const RESPONSE_HEADERS = {
   headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
 };
 
-const userApi = userName => {
+const userApi = (userName) => {
   return `https://api.twitch.tv/kraken/users/${userName}/follows/channels?limit=100`;
 };
 
@@ -23,26 +29,31 @@ const previewUrl = (userName, width, height) => {
   return `https://static-cdn.jtvnw.net/previews-ttv/live_user_${userName}-${width}x${height}.jpg`;
 };
 
-const AUTH_TOKEN_URI = `https://id.twitch.tv/oauth2/token?client_id=${CLIENT_ID}&client_secret=${CLIENT_SECRET}&grant_type=client_credentials`
+const AUTH_TOKEN_URI = `https://id.twitch.tv/oauth2/token?client_id=${CLIENT_ID}&client_secret=${CLIENT_SECRET}&grant_type=client_credentials`;
 
 const fetchAuthToken = async () => {
-  const authRes = await fetch(AUTH_TOKEN_URI, {method: 'POST'}).then(res => res.json());
+  const authRes = await fetch(AUTH_TOKEN_URI, { method: 'POST' }).then((res) =>
+    res.json()
+  );
   return authRes.access_token;
-}
+};
 
 const fetchUserIds = async (userNames, authToken) => {
-  const response = await fetch(`${USERS_URI}?login=${userNames.join('&login=')}`, AUTH_HEADERS(authToken));
+  const response = await fetch(
+    `${USERS_URI}?login=${userNames.join('&login=')}`,
+    AUTH_HEADERS(authToken)
+  );
   const json = await response.json();
   return json.data.map((user) => user.id);
-}
+};
 
-const fetchLiveStreamers = async request => {
+const fetchLiveStreamers = async (request) => {
   const streamersRequested = await request.json();
   const streamersToFetch = [];
   const streamersResponse = {};
   const NOW = new Date().valueOf();
 
-  streamersRequested.channels.forEach(channel => {
+  streamersRequested.channels.forEach((channel) => {
     const streamersCache = GLOBAL_TWITCH_CACHE[channel];
 
     if (!streamersCache) {
@@ -72,9 +83,8 @@ const fetchLiveStreamers = async request => {
   const authToken = await fetchAuthToken();
 
   const twitchStreamResults = await Promise.all(
-    groups.map(async group => {
-      const userIds = await fetchUserIds(group, authToken);
-      const streamersParam = `channel=${userIds.join(',')}`;
+    groups.map(async (group) => {
+      const streamersParam = group.map((u) => `user_login=${u}`).join('&');
 
       const api = `${STREAMS_URI}&${streamersParam}`;
 
@@ -84,20 +94,29 @@ const fetchLiveStreamers = async request => {
     })
   );
 
-  twitchStreamResults.forEach(streamResults => {
-    streamResults.streams.forEach(stream => {
-      stream.cached = true;
-      stream.username = stream.channel.name;
+  twitchStreamResults.forEach((streamResults) => {
+    streamResults.data.forEach((stream) => {
+      const streamData = {
+        cached: true,
+        username = stream.user_login,
+        channel = {
+          display_name: stream.user_login,
+          status: stream.title,
+        },
+        game = stream.game_name,
+        viewers = stream.viewer_count,
+        created_at = stream.started_at,
+      }
 
-      streamersResponse[stream.channel.name] = stream;
-      GLOBAL_TWITCH_CACHE[stream.channel.name] = {
-        data: stream,
+      streamersResponse[stream.user_login] = streamData;
+      GLOBAL_TWITCH_CACHE[stream.user_login] = {
+        data: streamData,
         expires: NOW + 60000,
       };
     });
   });
 
-  streamersToFetch.forEach(streamer => {
+  streamersToFetch.forEach((streamer) => {
     if (streamersResponse[streamer]) {
       return;
     }
@@ -112,12 +131,13 @@ const fetchLiveStreamers = async request => {
 };
 
 const fetchUserFollows = async (request, requestUrl) => {
+  try {
   let allFollows = [];
   let totalFollows = Infinity;
   const userName = requestUrl.pathname.replace('/user-follows/', '');
   const authToken = await fetchAuthToken();
 
-  const userId = await fetchUserIds([userName], authToken)
+  const userId = await fetchUserIds([userName], authToken);
   let nextUrl = userApi(userId[0]);
 
   while (allFollows.length <= totalFollows) {
@@ -134,7 +154,7 @@ const fetchUserFollows = async (request, requestUrl) => {
     totalFollows = followers['_total'];
 
     allFollows = allFollows.concat(
-      followers.follows.map(follow => {
+      followers.follows.map((follow) => {
         return follow.channel.name;
       })
     );
@@ -146,23 +166,29 @@ const fetchUserFollows = async (request, requestUrl) => {
     JSON.stringify({ follows: allFollows }),
     RESPONSE_HEADERS
   );
+  } catch (e) {
+    return new Response(
+      JSON.stringify({ follows: [] }),
+      RESPONSE_HEADERS
+    );
+  }
 };
 
-const handlePreviewImage = async url => {
+const handlePreviewImage = async (url) => {
   const [_, __, userName, width, height] = url.pathname.split('/');
   const response = await fetch(previewUrl(userName, width, height));
 
   const imageResponse = new Response(response.body, response);
   imageResponse.headers.delete('x-served-by');
   imageResponse.headers.delete('set-cookie');
-  Object.keys(CORS_HEADERS).forEach(key => {
+  Object.keys(CORS_HEADERS).forEach((key) => {
     imageResponse.headers.set(key, CORS_HEADERS[key]);
   });
 
   return imageResponse;
 };
 
-const handleOptions = request => {
+const handleOptions = (request) => {
   if (
     request.headers.get('Origin') !== null &&
     request.headers.get('Access-Control-Request-Method') !== null &&
@@ -186,7 +212,7 @@ const handleOptions = request => {
  * Fetch and log a request
  * @param {Request} request
  */
-const handleRequest = async request => {
+const handleRequest = async (request) => {
   const requestUrl = new URL(request.url);
   const requestPathName = requestUrl.pathname;
 
@@ -207,6 +233,13 @@ const handleRequest = async request => {
     requestPathName.startsWith('/channel-preview')
   ) {
     return handlePreviewImage(requestUrl);
+  } else if (
+    request.method === 'GET' &&
+    requestPathName.startsWith('/version')
+  ) {
+    return new Response(JSON.stringify({ version: 'Twitch-api-update' }), {
+      status: 200,
+    });
   }
 
   return new Response(null, {
@@ -215,6 +248,6 @@ const handleRequest = async request => {
   });
 };
 
-addEventListener('fetch', event => {
+addEventListener('fetch', (event) => {
   event.respondWith(handleRequest(event.request));
 });
