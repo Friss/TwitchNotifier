@@ -1,4 +1,4 @@
-const STREAMS_URI = 'https://api.twitch.tv/helix/streams?offset=0&limit=100';
+const STREAMS_URI = 'https://api.twitch.tv/helix/streams?first=100';
 const USERS_URI = 'https://api.twitch.tv/helix/users';
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
