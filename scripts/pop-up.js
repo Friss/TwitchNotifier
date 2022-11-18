@@ -4,7 +4,7 @@ let hideOffline = false;
 let hidePreviews = false;
 let hideStreamersOnlineCount = false;
 
-const fetchStreamerStatus = storage => {
+const fetchStreamerStatus = (storage) => {
   if (!storage.twitchStreams) {
     storage.twitchStreams = [];
     chrome.storage.sync.set({ twitchStreams: storage.twitchStreams }, () => {});
@@ -16,7 +16,7 @@ const fetchStreamerStatus = storage => {
         action: 'fetchStreamerStatus',
         usernames: Array.from(new Set(storage.twitchStreams)),
       },
-      response => {
+      (response) => {
         displayStreamerStatus(response);
       }
     );
@@ -25,7 +25,7 @@ const fetchStreamerStatus = storage => {
   }
 };
 
-const updateSetBadgeText = setBadgeText => {
+const updateSetBadgeText = (setBadgeText) => {
   chrome.extension.sendRequest(
     {
       action: 'setBadgeText',
@@ -47,7 +47,7 @@ const sortStreams = (streamA, streamB) => {
   return 0;
 };
 
-const createStreamerEntry = stream => {
+const createStreamerEntry = (stream) => {
   if (!stream.channel) {
     if (hideOffline) {
       return '';
@@ -99,7 +99,7 @@ const createStreamerEntry = stream => {
   }
 };
 
-const displayStreamerStatus = streams => {
+const displayStreamerStatus = (streams) => {
   document.getElementById('loading').classList.add('hidden');
 
   if (!streams) {
@@ -110,7 +110,7 @@ const displayStreamerStatus = streams => {
   document.getElementById('emptyState').classList.add('hidden');
   document.getElementById('streamers').innerHTML = '';
 
-  streams.sort(sortStreams).forEach(stream => {
+  streams.sort(sortStreams).forEach((stream) => {
     const html = createStreamerEntry(stream);
 
     const entry = document.createElement('li');
@@ -128,7 +128,7 @@ document.addEventListener('DOMContentLoaded', () => {
       'hideStreamersOnlineCount',
       'twitchStreams',
     ],
-    storage => {
+    (storage) => {
       hideOffline = storage.hideOffline;
       document.getElementById('hideOffline').checked = !hideOffline;
 
@@ -136,19 +136,20 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('hidePreviews').checked = !hidePreviews;
 
       hideStreamersOnlineCount = storage.hideStreamersOnlineCount;
-      document.getElementById(
-        'hideStreamersOnlineCount'
-      ).checked = !hideStreamersOnlineCount;
+      document.getElementById('hideStreamersOnlineCount').checked =
+        !hideStreamersOnlineCount;
 
       fetchStreamerStatus(storage);
     }
   );
 
-  document.getElementById('addForm').addEventListener('submit', evt => {
+  document.getElementById('addForm').addEventListener('submit', (evt) => {
     evt.preventDefault();
-    const user = document.getElementById('streamerUsername').value;
+    const user = document
+      .getElementById('streamerUsername')
+      .value.toLowerCase();
     if (user) {
-      chrome.storage.sync.get('twitchStreams', storage => {
+      chrome.storage.sync.get('twitchStreams', (storage) => {
         storage.twitchStreams.push(user);
         chrome.storage.sync.set(
           { twitchStreams: Array.from(new Set(storage.twitchStreams)) },
@@ -161,7 +162,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  document.getElementById('syncFollowers').addEventListener('submit', evt => {
+  document.getElementById('syncFollowers').addEventListener('submit', (evt) => {
     evt.preventDefault();
     const user = document.getElementById('username').value;
     if (user) {
@@ -170,7 +171,7 @@ document.addEventListener('DOMContentLoaded', () => {
           action: 'fetchFollows',
           username: user,
         },
-        response => {
+        (response) => {
           displayStreamerStatus(response);
         }
       );
@@ -178,7 +179,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  document.body.addEventListener('click', evt => {
+  document.body.addEventListener('click', (evt) => {
     if (evt.target.nodeName === 'A') {
       if (evt.target.classList.contains('twitch-link')) {
         chrome.tabs.create({ url: evt.target.getAttribute('href') });
@@ -211,7 +212,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const streamer = evt.target.getAttribute('data-username');
 
-      chrome.storage.sync.get('twitchStreams', storage => {
+      chrome.storage.sync.get('twitchStreams', (storage) => {
         const index = storage.twitchStreams.indexOf(streamer);
 
         if (index >= 0) {
@@ -229,14 +230,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  document.getElementById('hideOffline').addEventListener('change', evt => {
+  document.getElementById('hideOffline').addEventListener('change', (evt) => {
     chrome.storage.sync.set({ hideOffline: !evt.target.checked }, () => {
       hideOffline = !evt.target.checked;
       chrome.storage.sync.get('twitchStreams', fetchStreamerStatus);
     });
   });
 
-  document.getElementById('hidePreviews').addEventListener('change', evt => {
+  document.getElementById('hidePreviews').addEventListener('change', (evt) => {
     chrome.storage.sync.set({ hidePreviews: !evt.target.checked }, () => {
       hidePreviews = !evt.target.checked;
       chrome.storage.sync.get('twitchStreams', fetchStreamerStatus);
@@ -245,7 +246,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document
     .getElementById('hideStreamersOnlineCount')
-    .addEventListener('change', evt => {
+    .addEventListener('change', (evt) => {
       chrome.storage.sync.set(
         { hideStreamersOnlineCount: !evt.target.checked },
         () => {
