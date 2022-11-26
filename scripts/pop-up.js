@@ -76,7 +76,7 @@ const createStreamerEntry = (stream) => {
           <a class='online twitch-link' href='http://twitch.tv/${
             stream.username
           }'>
-            ${stream.channel.display_name} - ${stream.channel.status}
+            ${stream.user_name} - ${stream.channel.status}
           </a>
           <ul class="list-unstyled">
             <li>
