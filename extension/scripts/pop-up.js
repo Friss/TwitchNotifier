@@ -47,6 +47,15 @@ const sortStreams = (streamA, streamB) => {
   return 0;
 };
 
+const abbreviateViewerCount = (number) => {
+  // regex to avoid trailing zeros
+  return number >= 1e6
+    ? (number / 1e6).toFixed(1).replace(/\.0$/, '') + 'M'
+    : number >= 1e3
+    ? (number / 1e3).toFixed(1).replace(/\.0$/, '') + 'K'
+    : number;
+};
+
 const createStreamerEntry = (stream) => {
   if (!stream.channel) {
     if (hideOffline) {
@@ -54,12 +63,16 @@ const createStreamerEntry = (stream) => {
     }
 
     return `
-      <i class='fa fa-times remove' data-username='${stream.username}'></i>
-      <a class='offline twitch-link' href='http://twitch.tv/${stream.username}'>${stream.username}</a>
+      <div class="row streamer-offline">
+        <div class="col-xs-12 no-padding">
+          <i class='fa fa-times remove' data-username='${stream.username}'></i>
+          <a class='offline twitch-link' href='http://twitch.tv/${stream.username}'>${stream.username}</a>
+        </div>
+      </div>
     `;
   } else {
     const imageDiv = `
-      <div class="col-xs-6">
+      <div class="col-xs-6 no-padding">
         <img class="img-responsive" src="${getPreviewUrl(
           stream.username,
           320,
@@ -70,7 +83,9 @@ const createStreamerEntry = (stream) => {
 
     return `
       <div class="row streamer-online">
-        <div class="${hidePreviews ? 'col-xs-12' : 'col-xs-6'}">
+        <div class="${
+          hidePreviews ? 'col-xs-12 no-padding' : 'col-xs-6 no-padding'
+        }">
           <i class='fa fa-times remove' data-username='${stream.username}'></i>
           <i class='fa fa-video-camera'></i>
           <a class='online twitch-link' href='http://twitch.tv/${
@@ -85,7 +100,7 @@ const createStreamerEntry = (stream) => {
             </li>
             <li>
               <i class="fa fa-users"></i>
-              ${stream.viewers}
+              ${abbreviateViewerCount(stream.viewers)}
             </li>
             <li>
               <i class="fa fa-clock-o"></i>
@@ -157,23 +172,6 @@ document.addEventListener('DOMContentLoaded', () => {
           }
         );
       });
-    }
-  });
-
-  document.getElementById('syncFollowers').addEventListener('submit', (evt) => {
-    evt.preventDefault();
-    const user = document.getElementById('username').value;
-    if (user) {
-      chrome.extension.sendRequest(
-        {
-          action: 'fetchFollows',
-          username: user,
-        },
-        (response) => {
-          displayStreamerStatus(response);
-        }
-      );
-      document.getElementById('username').value = '';
     }
   });
 
