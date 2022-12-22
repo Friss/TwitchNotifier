@@ -130,45 +130,9 @@ const fetchLiveStreamers = async (request) => {
   return new Response(JSON.stringify(streamersResponse), RESPONSE_HEADERS);
 };
 
-const fetchUserFollows = async (request, requestUrl) => {
-  try {
-    let allFollows = [];
-    let totalFollows = Infinity;
-    const userName = requestUrl.pathname.replace('/user-follows/', '');
-    const authToken = await fetchAuthToken();
-
-    const userId = await fetchUserIds([userName], authToken);
-    let nextUrl = userApi(userId[0]);
-
-    while (allFollows.length <= totalFollows) {
-      const response = await fetch(nextUrl, AUTH_HEADERS(authToken));
-      const followers = await response.json();
-
-      if (
-        followers.error ||
-        (followers.follows && followers.follows.length === 0)
-      ) {
-        break;
-      }
-
-      totalFollows = followers['_total'];
-
-      allFollows = allFollows.concat(
-        followers.follows.map((follow) => {
-          return follow.channel.name;
-        })
-      );
-
-      nextUrl = `${nextUrl}?offset=${allFollows.length}`;
-    }
-
-    return new Response(
-      JSON.stringify({ follows: allFollows }),
-      RESPONSE_HEADERS
-    );
-  } catch (e) {
-    return new Response(JSON.stringify({ follows: [] }), RESPONSE_HEADERS);
-  }
+const fetchUserFollows = async () => {
+  // This api is not available anymore so just return an empty array.
+  return new Response(JSON.stringify({ follows: [] }), RESPONSE_HEADERS);
 };
 
 const handlePreviewImage = async (url) => {

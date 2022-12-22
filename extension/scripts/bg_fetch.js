@@ -24,7 +24,7 @@ const fetchStreamerStatus = async (
       Accept: 'application/json',
     },
     body: JSON.stringify({
-      channels: usernames,
+      channels: usernames.map((username) => username.toLowerCase()),
     }),
   });
 
@@ -73,26 +73,6 @@ const fetchStreamerStatus = async (
   callback(hydratedData);
 };
 
-const fetchFollows = async (username, callback) => {
-  const response = await fetch(`${FOLLOW_API_URI}/${username}`, {
-    headers: {
-      Accept: 'application/json',
-    },
-  });
-  const followers = await response.json();
-
-  chrome.storage.sync.get('twitchStreams', async (storage) => {
-    if (storage.twitchStreams) {
-      const twitchStreams = Array.from(
-        new Set(storage.twitchStreams.concat(followers.follows))
-      );
-      chrome.storage.sync.set({ twitchStreams }, () => {
-        fetchStreamerStatus(twitchStreams, callback, false);
-      });
-    }
-  });
-};
-
 const createNotification = async (stream) => {
   const imageResponse = await fetch(getPreviewUrl(stream.username, 640, 360));
   const imageData = await imageResponse.blob();
@@ -123,8 +103,6 @@ const handleClick = (id) => {
 const onRequest = (request, sender, callback) => {
   if (request.action == 'fetchStreamerStatus') {
     fetchStreamerStatus(request.usernames, callback);
-  } else if (request.action === 'fetchFollows') {
-    fetchFollows(request.username, callback);
   } else if (request.action === 'setBadgeText') {
     setBadgeText = request.setBadgeText;
     if (!setBadgeText) {
