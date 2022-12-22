@@ -47,6 +47,15 @@ const sortStreams = (streamA, streamB) => {
   return 0;
 };
 
+const abbreviateViewerCount = (number) => {
+  // regex to avoid trailing zeros
+  return number >= 1e6
+    ? (number / 1e6).toFixed(1).replace(/\.0$/, '') + 'M'
+    : number >= 1e3
+    ? (number / 1e3).toFixed(1).replace(/\.0$/, '') + 'K'
+    : number;
+};
+
 const createStreamerEntry = (stream) => {
   if (!stream.channel) {
     if (hideOffline) {
@@ -91,7 +100,7 @@ const createStreamerEntry = (stream) => {
             </li>
             <li>
               <i class="fa fa-users"></i>
-              ${stream.viewers}
+              ${abbreviateViewerCount(stream.viewers)}
             </li>
             <li>
               <i class="fa fa-clock-o"></i>
