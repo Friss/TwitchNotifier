@@ -21,10 +21,6 @@ const RESPONSE_HEADERS = {
   headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
 };
 
-const userApi = (userName) => {
-  return `https://api.twitch.tv/kraken/users/${userName}/follows/channels?limit=100`;
-};
-
 const previewUrl = (userName, width, height) => {
   return `https://static-cdn.jtvnw.net/previews-ttv/live_user_${userName}-${width}x${height}.jpg`;
 };
@@ -82,35 +78,47 @@ const fetchLiveStreamers = async (request) => {
 
   const authToken = await fetchAuthToken();
 
-  const twitchStreamResults = await Promise.all(
-    groups.map(async (group) => {
-      const streamersParam = group.map((u) => `user_login=${u}`).join('&');
+  let twitchStreamResults;
 
-      const api = `${STREAMS_URI}&${streamersParam}`;
+  try {
+    twitchStreamResults = await Promise.all(
+      groups.map(async (group) => {
+        const streamersParam = group.map((u) => `user_login=${u}`).join('&');
 
-      const response = await fetch(api, AUTH_HEADERS(authToken));
+        const api = `${STREAMS_URI}&${streamersParam}`;
 
-      return response.json();
-    })
-  );
+        const response = await fetch(api, AUTH_HEADERS(authToken));
+
+        return response.json();
+      })
+    );
+  } catch (e) {
+    console.error('Fetch stream results failed', e);
+  }
+
+  if (!twitchStreamResults) {
+    return new Response(JSON.stringify(streamersResponse), RESPONSE_HEADERS);
+  }
 
   twitchStreamResults.forEach((streamResults) => {
-    streamResults.data.forEach((stream) => {
-      const streamData = {
-        cached: true,
-        username: stream.user_login,
-        channel: {
-          display_name: stream.user_login,
-          status: stream.title,
-        },
-        game: stream.game_name,
-        viewers: stream.viewer_count,
-        created_at: stream.started_at,
-      };
+    if (!streamResults.data) {
+      return;
+    }
 
-      streamersResponse[stream.user_login] = streamData;
+    streamResults.data.forEach((stream) => {
+      stream.cached = true;
+      stream.username = stream.user_login;
+      stream.channel = {
+        display_name: stream.user_login,
+        status: stream.title,
+      };
+      stream.game = stream.game_name;
+      stream.viewers = stream.viewer_count;
+      stream.created_at = stream.started_at;
+
+      streamersResponse[stream.user_login] = stream;
       GLOBAL_TWITCH_CACHE[stream.user_login] = {
-        data: streamData,
+        data: stream,
         expires: NOW + 60000,
       };
     });
@@ -174,39 +182,53 @@ const handleOptions = (request) => {
  * @param {Request} request
  */
 const handleRequest = async (request) => {
-  const requestUrl = new URL(request.url);
-  const requestPathName = requestUrl.pathname;
+  try {
+    const requestUrl = new URL(request.url);
+    const requestPathName = requestUrl.pathname;
 
-  if (request.method === 'OPTIONS') {
-    return handleOptions(request);
-  } else if (
-    request.method === 'POST' &&
-    requestPathName === '/channel-status'
-  ) {
-    return fetchLiveStreamers(request);
-  } else if (
-    request.method === 'GET' &&
-    requestPathName.startsWith('/user-follows')
-  ) {
-    return fetchUserFollows(request, requestUrl);
-  } else if (
-    request.method === 'GET' &&
-    requestPathName.startsWith('/channel-preview')
-  ) {
-    return handlePreviewImage(requestUrl);
-  } else if (
-    request.method === 'GET' &&
-    requestPathName.startsWith('/version')
-  ) {
-    return new Response(JSON.stringify({ version: 'Twitch-api-update' }), {
-      status: 200,
+    if (request.method === 'OPTIONS') {
+      return handleOptions(request);
+    } else if (
+      request.method === 'POST' &&
+      requestPathName === '/channel-status'
+    ) {
+      return fetchLiveStreamers(request);
+    } else if (
+      request.method === 'GET' &&
+      requestPathName.startsWith('/user-follows')
+    ) {
+      return fetchUserFollows(request, requestUrl);
+    } else if (
+      request.method === 'GET' &&
+      requestPathName.startsWith('/channel-preview')
+    ) {
+      return handlePreviewImage(requestUrl);
+    } else if (
+      request.method === 'GET' &&
+      requestPathName.startsWith('/version')
+    ) {
+      return new Response(JSON.stringify({ version: '2022-12-22 1:28pm' }), {
+        status: 200,
+      });
+    }
+
+    return new Response(null, {
+      status: 418,
+      statusText: "I'm a teapot",
     });
+  } catch (error) {
+    console.log(error);
+    return new Response(
+      JSON.stringify({
+        error: true,
+        message: 'Something went wrong processing this request.',
+      }),
+      {
+        ...RESPONSE_HEADERS,
+        status: 500,
+      }
+    );
   }
-
-  return new Response(null, {
-    status: 418,
-    statusText: "I'm a teapot",
-  });
 };
 
 addEventListener('fetch', (event) => {
