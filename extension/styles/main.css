@@ -1,18 +1,19 @@
-html,body {
+html,
+body {
   font-family: 'Open Sans', sans-serif;
-   margin: 0;
-  height: 600px; /* can also use viewport units (height: 100vh) */
+  margin: 0;
+  height: 600px;
   width: 550px;
 }
 
 body {
-  display:flex;
+  display: flex;
 }
 
 #main {
-  display: flex; /* displays flex-items (children) inline */
-  flex-direction: column; /* stacks them vertically */
-  height: 100%; /* needs to take the parents height, alternative: body {display: flex} */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   width: 100%;
 }
 
@@ -21,13 +22,13 @@ body {
 }
 
 .content {
-  flex: 1; /* takes the remaining height of the "container" div */
-  overflow: auto; /* to scroll just the "main" div */
+  flex: 1;
+  overflow: auto;
 }
 
 .section {
-  height: 100%; /* takes the visible area of the "main" div */
-  overflow: auto; /* recommended */
+  height: 100%;
+  overflow: auto;
 }
 
 .purple {
