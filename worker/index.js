@@ -98,15 +98,15 @@ const fetchLiveStreamers = async (request) => {
     streamResults.data.forEach((stream) => {
       const streamData = {
         cached: true,
-        username = stream.user_login,
-        channel = {
+        username: stream.user_login,
+        channel: {
           display_name: stream.user_login,
           status: stream.title,
         },
-        game = stream.game_name,
-        viewers = stream.viewer_count,
-        created_at = stream.started_at,
-      }
+        game: stream.game_name,
+        viewers: stream.viewer_count,
+        created_at: stream.started_at,
+      };
 
       streamersResponse[stream.user_login] = streamData;
       GLOBAL_TWITCH_CACHE[stream.user_login] = {
@@ -132,45 +132,42 @@ const fetchLiveStreamers = async (request) => {
 
 const fetchUserFollows = async (request, requestUrl) => {
   try {
-  let allFollows = [];
-  let totalFollows = Infinity;
-  const userName = requestUrl.pathname.replace('/user-follows/', '');
-  const authToken = await fetchAuthToken();
+    let allFollows = [];
+    let totalFollows = Infinity;
+    const userName = requestUrl.pathname.replace('/user-follows/', '');
+    const authToken = await fetchAuthToken();
 
-  const userId = await fetchUserIds([userName], authToken);
-  let nextUrl = userApi(userId[0]);
+    const userId = await fetchUserIds([userName], authToken);
+    let nextUrl = userApi(userId[0]);
 
-  while (allFollows.length <= totalFollows) {
-    const response = await fetch(nextUrl, AUTH_HEADERS(authToken));
-    const followers = await response.json();
+    while (allFollows.length <= totalFollows) {
+      const response = await fetch(nextUrl, AUTH_HEADERS(authToken));
+      const followers = await response.json();
 
-    if (
-      followers.error ||
-      (followers.follows && followers.follows.length === 0)
-    ) {
-      break;
+      if (
+        followers.error ||
+        (followers.follows && followers.follows.length === 0)
+      ) {
+        break;
+      }
+
+      totalFollows = followers['_total'];
+
+      allFollows = allFollows.concat(
+        followers.follows.map((follow) => {
+          return follow.channel.name;
+        })
+      );
+
+      nextUrl = `${nextUrl}?offset=${allFollows.length}`;
     }
 
-    totalFollows = followers['_total'];
-
-    allFollows = allFollows.concat(
-      followers.follows.map((follow) => {
-        return follow.channel.name;
-      })
-    );
-
-    nextUrl = `${nextUrl}?offset=${allFollows.length}`;
-  }
-
-  return new Response(
-    JSON.stringify({ follows: allFollows }),
-    RESPONSE_HEADERS
-  );
-  } catch (e) {
     return new Response(
-      JSON.stringify({ follows: [] }),
+      JSON.stringify({ follows: allFollows }),
       RESPONSE_HEADERS
     );
+  } catch (e) {
+    return new Response(JSON.stringify({ follows: [] }), RESPONSE_HEADERS);
   }
 };
 
