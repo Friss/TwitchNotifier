@@ -11,22 +11,21 @@ const fetchStreamerStatus = (storage) => {
   }
 
   if (storage.twitchStreams.length) {
-    chrome.extension.sendRequest(
-      {
+    chrome.runtime
+      .sendMessage({
         action: 'fetchStreamerStatus',
         usernames: Array.from(new Set(storage.twitchStreams)),
-      },
-      (response) => {
+      })
+      .then((response) => {
         displayStreamerStatus(response);
-      }
-    );
+      });
   } else {
     displayStreamerStatus();
   }
 };
 
 const updateSetBadgeText = (setBadgeText) => {
-  chrome.extension.sendRequest(
+  chrome.runtime.sendMessage(
     {
       action: 'setBadgeText',
       setBadgeText,
@@ -186,10 +185,10 @@ document.addEventListener('DOMContentLoaded', () => {
         chrome.storage.sync.set({ twitchStreams: [] }, () => {
           document.getElementById('emptyState').classList.remove('hidden');
           document.getElementById('streamers').innerHTML = '';
-          chrome.browserAction.setBadgeText({
+          chrome.action.setBadgeText({
             text: '',
           });
-          chrome.browserAction.setTitle({
+          chrome.action.setTitle({
             title: '',
           });
         });
