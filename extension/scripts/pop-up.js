@@ -11,22 +11,23 @@ const fetchStreamerStatus = (storage) => {
   }
 
   if (storage.twitchStreams.length) {
-    chrome.extension.sendRequest(
-      {
+    chrome.runtime
+      .sendMessage({
         action: 'fetchStreamerStatus',
-        usernames: Array.from(new Set(storage.twitchStreams)),
-      },
-      (response) => {
+        usernames: Array.from(
+          new Set(storage.twitchStreams.map((s) => s.toLowerCase()))
+        ),
+      })
+      .then((response) => {
         displayStreamerStatus(response);
-      }
-    );
+      });
   } else {
     displayStreamerStatus();
   }
 };
 
 const updateSetBadgeText = (setBadgeText) => {
-  chrome.extension.sendRequest(
+  chrome.runtime.sendMessage(
     {
       action: 'setBadgeText',
       setBadgeText,
@@ -91,7 +92,7 @@ const createStreamerEntry = (stream) => {
           <a class='online twitch-link' href='http://twitch.tv/${
             stream.username
           }'>
-            ${stream.channel.display_name} - ${stream.channel.status}
+            ${stream.user_name} - ${stream.channel.status}
           </a>
           <ul class="list-unstyled">
             <li>
@@ -186,10 +187,10 @@ document.addEventListener('DOMContentLoaded', () => {
         chrome.storage.sync.set({ twitchStreams: [] }, () => {
           document.getElementById('emptyState').classList.remove('hidden');
           document.getElementById('streamers').innerHTML = '';
-          chrome.browserAction.setBadgeText({
+          chrome.action.setBadgeText({
             text: '',
           });
-          chrome.browserAction.setTitle({
+          chrome.action.setTitle({
             title: '',
           });
         });
@@ -209,7 +210,9 @@ document.addEventListener('DOMContentLoaded', () => {
       const streamer = evt.target.getAttribute('data-username');
 
       chrome.storage.sync.get('twitchStreams', (storage) => {
-        const index = storage.twitchStreams.indexOf(streamer);
+        const index = storage.twitchStreams.findIndex(
+          (item) => item.toLowerCase() === streamer.toLowerCase()
+        );
 
         if (index >= 0) {
           storage.twitchStreams.splice(index, 1);
