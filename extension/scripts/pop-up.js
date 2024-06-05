@@ -14,7 +14,9 @@ const fetchStreamerStatus = (storage) => {
     chrome.runtime
       .sendMessage({
         action: 'fetchStreamerStatus',
-        usernames: Array.from(new Set(storage.twitchStreams)),
+        usernames: Array.from(
+          new Set(storage.twitchStreams.map((s) => s.toLowerCase()))
+        ),
       })
       .then((response) => {
         displayStreamerStatus(response);
@@ -90,7 +92,7 @@ const createStreamerEntry = (stream) => {
           <a class='online twitch-link' href='http://twitch.tv/${
             stream.username
           }'>
-            ${stream.channel.display_name} - ${stream.channel.status}
+            ${stream.user_name} - ${stream.channel.status}
           </a>
           <ul class="list-unstyled">
             <li>
@@ -208,7 +210,9 @@ document.addEventListener('DOMContentLoaded', () => {
       const streamer = evt.target.getAttribute('data-username');
 
       chrome.storage.sync.get('twitchStreams', (storage) => {
-        const index = storage.twitchStreams.indexOf(streamer);
+        const index = storage.twitchStreams.findIndex(
+          (item) => item.toLowerCase() === streamer.toLowerCase()
+        );
 
         if (index >= 0) {
           storage.twitchStreams.splice(index, 1);

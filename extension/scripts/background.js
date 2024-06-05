@@ -54,9 +54,14 @@ const fetchStreamerStatus = async (
 
   const streamersLive = await response.json();
 
-  const knownOnlineStreamers = (
-    await chrome.storage.local.get(['knownOnlineStreamers'])
-  ).knownOnlineStreamers;
+  const knownOnlineStreamersData = await chrome.storage.local.get([
+    'knownOnlineStreamers',
+  ]);
+
+  const knownOnlineStreamers =
+    knownOnlineStreamersData && knownOnlineStreamersData.knownOnlineStreamers
+      ? knownOnlineStreamersData.knownOnlineStreamers
+      : {};
 
   for (let streamer of Object.keys(knownOnlineStreamers)) {
     if (!streamersLive[streamer]) {
