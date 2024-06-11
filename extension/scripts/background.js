@@ -145,7 +145,7 @@ chrome.alarms.onAlarm.addListener(() => {
   });
 });
 
-chrome.runtime.onInstalled.addListener(async ({ reason }) => {
+chrome.runtime.onInstalled.addListener(async () => {
   chrome.alarms.get('backgroundFetch', (alarm) => {
     if (!alarm) {
       chrome.alarms.create('backgroundFetch', { periodInMinutes: 5 });
