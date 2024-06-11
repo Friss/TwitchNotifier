@@ -135,14 +135,20 @@ chrome.runtime.onMessage.addListener(onRequest);
 chrome.notifications.onClicked.addListener(handleClick);
 chrome.notifications.onButtonClicked.addListener(handleClick);
 chrome.action.setBadgeBackgroundColor({ color: '#5cb85c' });
-
-chrome.alarms.create({ delayInMinutes: 5 });
 chrome.alarms.onAlarm.addListener(() => {
   chrome.storage.sync.get('twitchStreams', async (storage) => {
     if (storage.twitchStreams) {
       try {
         await fetchStreamerStatus(storage.twitchStreams, () => {});
       } catch (e) {}
+    }
+  });
+});
+
+chrome.runtime.onInstalled.addListener(async () => {
+  chrome.alarms.get('backgroundFetch', (alarm) => {
+    if (!alarm) {
+      chrome.alarms.create('backgroundFetch', { periodInMinutes: 5 });
     }
   });
 });
