@@ -1,6 +1,6 @@
 {
   "name": "Twitch Stream Notifier",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "manifest_version": 3,
   "description": "See when streamers go online!",
   "icons": {
@@ -13,7 +13,12 @@
   "background": {
     "service_worker": "scripts/background.js"
   },
-  "permissions": ["notifications", "storage", "background", "alarms"],
+  "permissions": [
+    "notifications",
+    "storage",
+    "background",
+    "alarms"
+  ],
   "action": {
     "default_icon": "images/logo_128.png",
     "default_title": "Twitch Stream Notifier",
