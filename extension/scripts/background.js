@@ -108,7 +108,7 @@ const fetchStreamerStatus = async (
 };
 
 const handleClick = (id) => {
-  chrome.storage.local.get(['notifications']).then((result) => {
+  chrome.storage.session.get(['notifications']).then((result) => {
     const url = 'https://twitch.tv/' + result.notifications[id];
     chrome.tabs.create({ url: url });
   });
@@ -146,9 +146,9 @@ chrome.alarms.onAlarm.addListener(() => {
 });
 
 chrome.runtime.onInstalled.addListener(async () => {
-  chrome.alarms.get('backgroundFetch', (alarm) => {
-    if (!alarm) {
-      chrome.alarms.create('backgroundFetch', { periodInMinutes: 5 });
-    }
-  });
+  const backgroundAlarm = await chrome.alarms.get('backgroundFetch');
+
+  if (!backgroundAlarm) {
+    chrome.alarms.create('backgroundFetch', { periodInMinutes: 5 });
+  }
 });
