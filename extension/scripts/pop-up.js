@@ -1,3 +1,13 @@
+const escapeHtml = (unsafe) => {
+  if (!unsafe) return '';
+  return unsafe
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+};
+
 const getPreviewUrl = (userName, width, height) =>
   `https://static-cdn.jtvnw.net/previews-ttv/live_user_${userName}-${width}x${height}.jpg`;
 let hideOffline = false;
@@ -92,12 +102,14 @@ const createStreamerEntry = (stream) => {
           <a class='online twitch-link' href='http://twitch.tv/${
             stream.username
           }'>
-            ${stream.user_name} - ${stream.channel.status}
+            ${escapeHtml(stream.user_name)} - ${escapeHtml(
+      stream.channel.status
+    )}
           </a>
           <ul class="list-unstyled">
             <li>
               <i class="fa fa-gamepad"></i>
-              ${stream.game}
+              ${escapeHtml(stream.game)}
             </li>
             <li>
               <i class="fa fa-users"></i>
