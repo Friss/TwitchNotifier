@@ -46,6 +46,55 @@ body {
   height: 60px;
 }
 
+.banner .logo {
+  height: 36px;
+  width: auto;
+  margin-right: 10px;
+  align-self: center;
+}
+
+.header-left .heading {
+  margin: 0;
+  line-height: 60px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.header-btns {
+  display: flex;
+  align-items: center;
+}
+
+.header-btns .btn {
+  margin-left: 8px;
+  padding: 8px 16px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.031em;
+}
+
+.header-btns .btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.5);
+  transform: translateY(-1px);
+}
+
+.header-btns .btn:active {
+  transform: translateY(0);
+  background: rgba(255, 255, 255, 0.15);
+}
+
 .footer {
   border-top: 1px solid #ccc;
   padding-top: 15px;
@@ -100,7 +149,7 @@ li {
 }
 
 .spacing {
-  padding: 0px 15px;
+  padding: 0 15px;
 }
 
 .spacing .col-xs-3 {

@@ -267,4 +267,133 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       );
     });
+
+  /**
+   * Downloads data as a JSON file
+   */
+  const downloadJson = (data, filename = 'twitch_streamers.json') => {
+    const json = JSON.stringify(data, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+
+    // Cleanup
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  /**
+   * Parses import content into an array of streamer usernames
+   */
+  const parseImportContent = (text) => {
+    // Try JSON first
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map(String)
+          .map((s) => s.trim())
+          .filter(Boolean);
+      }
+    } catch {
+      // Not JSON, fall through
+    }
+
+    // Fallback: split by newlines or commas
+    return text
+      .split(/[\r\n,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  };
+
+  /**
+   * Loads current streamers from storage
+   */
+  const loadStreamers = () => {
+    return new Promise((resolve) => {
+      chrome.storage.sync.get('twitchStreams', (storage) => {
+        const list = Array.isArray(storage.twitchStreams)
+          ? storage.twitchStreams
+          : [];
+        resolve(list);
+      });
+    });
+  };
+
+  /**
+   * Saves streamers to storage and refreshes status
+   */
+  const saveAndRefresh = (streamers) => {
+    chrome.storage.sync.set({ twitchStreams: streamers }, () => {
+      fetchStreamerStatus({ twitchStreams: streamers });
+    });
+  };
+
+  /**
+   * Merges new streamers with existing ones (deduplicated)
+   */
+  const mergeStreamers = (existing, incoming) => {
+    return Array.from(new Set([...existing, ...incoming]));
+  };
+
+  // === Export Functionality ===
+  const exportBtn = document.getElementById('exportBtn');
+  if (exportBtn) {
+    exportBtn.addEventListener('click', async () => {
+      try {
+        const streamers = await loadStreamers();
+        downloadJson(streamers);
+      } catch (err) {
+        alert('Failed to export streamers.');
+        console.error('Export error:', err);
+      }
+    });
+  }
+
+  // === Import Functionality ===
+  const importBtn = document.getElementById('importBtn');
+  const importFile = document.getElementById('importFile');
+
+  if (importBtn && importFile) {
+    importBtn.addEventListener('click', () => importFile.click());
+
+    importFile.addEventListener('change', async (evt) => {
+      const file = evt.target.files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+
+      reader.onload = async () => {
+        try {
+          const text = reader.result;
+          if (typeof text !== 'string') throw new Error('Invalid file content');
+
+          const newStreamers = parseImportContent(text);
+          if (!newStreamers.length) throw new Error('No valid usernames found');
+
+          const existing = await loadStreamers();
+          const merged = mergeStreamers(existing, newStreamers);
+
+          saveAndRefresh(merged);
+          evt.target.value = ''; // Allow re-import of same file
+        } catch (err) {
+          alert(
+            'Import failed. Please provide a JSON array or a list of usernames separated by commas or newlines.'
+          );
+          console.error('Import error:', err);
+        }
+      };
+
+      reader.onerror = () => {
+        alert('Failed to read the file.');
+      };
+
+      reader.readAsText(file);
+    });
+  }
 });
