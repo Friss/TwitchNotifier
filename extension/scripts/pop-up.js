@@ -11,6 +11,13 @@ const escapeHtml = (unsafe) => {
 const getPreviewUrl = (userName, width, height) =>
   `https://static-cdn.jtvnw.net/previews-ttv/live_user_${userName}-${width}x${height}.jpg`;
 
+// Twitch login names are 1-25 chars of lowercase alphanumerics + underscore.
+// Anything else makes the backend's Helix batch 400, so reject it on add and
+// strip it from stored data on load.
+const TWITCH_LOGIN = /^[a-z0-9_]{1,25}$/;
+const isValidTwitchLogin = (value) =>
+  typeof value === 'string' && TWITCH_LOGIN.test(value.trim().toLowerCase());
+
 let hideOffline = false;
 let hidePreviews = false;
 let hideStreamersOnlineCount = false;
@@ -19,6 +26,14 @@ const fetchStreamerStatus = (storage) => {
   if (!storage.twitchStreams) {
     storage.twitchStreams = [];
     chrome.storage.sync.set({ twitchStreams: storage.twitchStreams }, () => {});
+  }
+
+  // Auto-remove any stored values Twitch would reject, persisting the cleaned
+  // list so bad entries self-heal on the next load instead of lingering.
+  const validStreams = storage.twitchStreams.filter(isValidTwitchLogin);
+  if (validStreams.length !== storage.twitchStreams.length) {
+    storage.twitchStreams = validStreams;
+    chrome.storage.sync.set({ twitchStreams: validStreams }, () => {});
   }
 
   if (storage.twitchStreams.length) {
@@ -172,21 +187,42 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   );
 
+  const usernameInput = document.getElementById('streamerUsername');
+
+  // Clear the rejection bubble once the user starts fixing the value.
+  usernameInput.addEventListener('input', () => {
+    usernameInput.setCustomValidity('');
+  });
+
   document.getElementById('addForm').addEventListener('submit', (evt) => {
     evt.preventDefault();
-    const user = document.getElementById('streamerUsername').value;
-    if (user) {
-      chrome.storage.sync.get('twitchStreams', (storage) => {
-        storage.twitchStreams.push(user);
-        chrome.storage.sync.set(
-          { twitchStreams: Array.from(new Set(storage.twitchStreams)) },
-          () => {
-            fetchStreamerStatus(storage);
-            document.getElementById('streamerUsername').value = '';
-          }
-        );
-      });
+    const user = usernameInput.value.trim();
+
+    if (!user) {
+      return;
     }
+
+    // Block bad values at the source so they never reach storage or the backend.
+    if (!isValidTwitchLogin(user)) {
+      usernameInput.setCustomValidity(
+        'Enter a valid Twitch username: letters, numbers, or underscore (max 25).'
+      );
+      usernameInput.reportValidity();
+      return;
+    }
+
+    usernameInput.setCustomValidity('');
+
+    chrome.storage.sync.get('twitchStreams', (storage) => {
+      storage.twitchStreams.push(user);
+      chrome.storage.sync.set(
+        { twitchStreams: Array.from(new Set(storage.twitchStreams)) },
+        () => {
+          fetchStreamerStatus(storage);
+          usernameInput.value = '';
+        }
+      );
+    });
   });
 
   document.body.addEventListener('click', (evt) => {
