@@ -13,6 +13,15 @@ const MAX_CONCURRENT_FETCHES = 6;
 // chunk IN (...) lookups to stay under the limit for users tracking >100
 // channels.
 const SQL_BIND_LIMIT = 100;
+// Transient Twitch failures (429 rate-limits, 5xx, network blips) are retried
+// with full-jitter backoff so a brief hiccup recovers within the same tick
+// instead of dropping the batch. Waits are capped so we never stall the
+// request/cron path — if Twitch asks us to wait longer than the cap we bail and
+// serve last-known-good cache instead.
+const MAX_FETCH_RETRIES = 2;
+const BASE_BACKOFF_MS = 200;
+const MAX_BACKOFF_MS = 2000;
+const MAX_RETRY_AFTER_MS = 3000;
 
 export class TwitchHub extends DurableObject {
   constructor(ctx, env) {
@@ -404,7 +413,7 @@ export class TwitchHub extends DurableObject {
       .join('&');
 
     try {
-      const response = await fetch(`${STREAMS_URI}&${query}`, {
+      const response = await fetchWithRetry(`${STREAMS_URI}&${query}`, {
         headers: {
           'Client-ID': this.getClientId(),
           Authorization: `Bearer ${token}`,
@@ -457,7 +466,7 @@ export class TwitchHub extends DurableObject {
     });
 
     try {
-      const response = await fetch('https://id.twitch.tv/oauth2/token', {
+      const response = await fetchWithRetry('https://id.twitch.tv/oauth2/token', {
         method: 'POST',
         body: params,
       });
@@ -562,4 +571,82 @@ function getPositiveNumber(rawValue, fallback) {
   }
 
   return value;
+}
+
+// Fetch with retry on transient failures. Retries 429/5xx responses and network
+// errors with full-jitter backoff, honoring a Retry-After header when present.
+// Returns the final Response (which the caller still inspects for .ok); only
+// rethrows when a network error persists past the last attempt.
+async function fetchWithRetry(url, options = {}, retries = MAX_FETCH_RETRIES) {
+  for (let attempt = 0; ; attempt++) {
+    let response;
+
+    try {
+      response = await fetch(url, options);
+    } catch (error) {
+      if (attempt >= retries) {
+        throw error;
+      }
+      await sleep(backoffDelay(attempt));
+      continue;
+    }
+
+    if (response.ok || !isRetryableStatus(response.status) || attempt >= retries) {
+      return response;
+    }
+
+    const wait = retryDelay(response, attempt);
+
+    // Retry-After longer than we're willing to block: give up now and let the
+    // caller fall back to cached status rather than stalling.
+    if (wait === null) {
+      return response;
+    }
+
+    await sleep(wait);
+  }
+}
+
+function isRetryableStatus(status) {
+  return status === 429 || status >= 500;
+}
+
+// Full jitter: a random wait in [0, ceiling) where the ceiling grows
+// exponentially per attempt, capped so one slow batch can't stall the path.
+function backoffDelay(attempt) {
+  const ceiling = Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** attempt);
+  return Math.floor(Math.random() * ceiling);
+}
+
+function retryDelay(response, attempt) {
+  const retryAfter = parseRetryAfter(response.headers.get('Retry-After'));
+
+  if (retryAfter !== null) {
+    return retryAfter > MAX_RETRY_AFTER_MS ? null : retryAfter;
+  }
+
+  return backoffDelay(attempt);
+}
+
+// Retry-After is either delta-seconds or an HTTP-date; return milliseconds.
+function parseRetryAfter(headerValue) {
+  if (!headerValue) {
+    return null;
+  }
+
+  const seconds = Number(headerValue);
+  if (Number.isFinite(seconds)) {
+    return Math.max(0, seconds * 1000);
+  }
+
+  const timestamp = Date.parse(headerValue);
+  if (Number.isNaN(timestamp)) {
+    return null;
+  }
+
+  return Math.max(0, timestamp - Date.now());
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
