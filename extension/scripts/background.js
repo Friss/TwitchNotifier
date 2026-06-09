@@ -202,35 +202,38 @@ const fetchFeatureFlags = async () => {
     return featureFlagRequest;
   }
 
+  // Resolve the error handling and cache write inside the shared promise so
+  // every concurrent awaiter gets the flags-or-fallback value and none can
+  // observe an unhandled rejection.
   featureFlagRequest = (async () => {
-    const installId = await ensureInstallId();
-    const response = await fetch(
-      `${FEATURE_FLAGS_URL}?installId=${encodeURIComponent(installId)}`
-    );
+    try {
+      const installId = await ensureInstallId();
+      const response = await fetch(
+        `${FEATURE_FLAGS_URL}?installId=${encodeURIComponent(installId)}`
+      );
 
-    if (!response.ok) {
-      throw new Error(`Feature flags failed with ${response.status}`);
+      if (!response.ok) {
+        throw new Error(`Feature flags failed with ${response.status}`);
+      }
+
+      const flags = await response.json();
+      featureFlagCache = {
+        flags,
+        expires: Date.now() + FEATURE_FLAG_TTL_MS,
+      };
+      return flags;
+    } catch (error) {
+      console.error('Feature Flag Error', error);
+      return {
+        transport: 'polling',
+        websocketUrl: DEFAULT_WS_URL,
+      };
+    } finally {
+      featureFlagRequest = null;
     }
-
-    return response.json();
   })();
 
-  try {
-    const flags = await featureFlagRequest;
-    featureFlagCache = {
-      flags,
-      expires: Date.now() + FEATURE_FLAG_TTL_MS,
-    };
-    return flags;
-  } catch (error) {
-    console.error('Feature Flag Error', error);
-    return {
-      transport: 'polling',
-      websocketUrl: DEFAULT_WS_URL,
-    };
-  } finally {
-    featureFlagRequest = null;
-  }
+  return featureFlagRequest;
 };
 
 const clearReconnectTimeout = () => {
@@ -291,17 +294,21 @@ const connectWebSocket = async () => {
     return;
   }
 
+  // Resolve usernames before the readyState check so the check and the
+  // WebSocket instantiation run synchronously back-to-back. Otherwise two
+  // concurrent callers could both pass the check during the await and open
+  // duplicate sockets.
+  const usernames = await getTrackedUsernames();
+
+  if (usernames.length === 0) {
+    return;
+  }
+
   if (
     webSocket &&
     (webSocket.readyState === WebSocket.OPEN ||
       webSocket.readyState === WebSocket.CONNECTING)
   ) {
-    return;
-  }
-
-  const usernames = await getTrackedUsernames();
-
-  if (usernames.length === 0) {
     return;
   }
 
@@ -416,17 +423,25 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     return;
   }
 
-  // In realtime mode the socket pushes updates, so only poll as a fallback
-  // when it isn't currently open.
-  if (
-    transportMode === 'realtime' &&
-    webSocket &&
-    webSocket.readyState === WebSocket.OPEN
-  ) {
-    return;
-  }
+  void (async () => {
+    // The alarm may have restarted the service worker, resetting module
+    // globals to their defaults (transportMode='polling', webSocket=null).
+    // Re-resolve transport first so realtime installs reconnect their socket
+    // instead of silently degrading to polling.
+    await syncTransportMode();
 
-  void refreshBackgroundState(true);
+    // In realtime mode the socket pushes updates, so only poll as a fallback
+    // when it isn't currently open.
+    if (
+      transportMode === 'realtime' &&
+      webSocket &&
+      webSocket.readyState === WebSocket.OPEN
+    ) {
+      return;
+    }
+
+    await refreshBackgroundState(true);
+  })();
 });
 
 chrome.runtime.onStartup.addListener(() => {
@@ -446,10 +461,19 @@ chrome.storage.onChanged.addListener((changes, area) => {
     void (async () => {
       await syncTransportMode();
       if (transportMode === 'realtime') {
-        disconnectWebSocket();
-        await connectWebSocket();
-      } else {
-        await ensurePollingAlarm();
+        // A subscribe message replaces the session's channel set, so reuse the
+        // open socket rather than tearing it down and reconnecting.
+        if (webSocket && webSocket.readyState === WebSocket.OPEN) {
+          const usernames = await getTrackedUsernames();
+          webSocket.send(
+            JSON.stringify({
+              action: 'subscribe',
+              channels: usernames,
+            })
+          );
+        } else {
+          await connectWebSocket();
+        }
       }
 
       await refreshBackgroundState(false);

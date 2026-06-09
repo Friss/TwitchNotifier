@@ -410,6 +410,11 @@ export class TwitchHub extends DurableObject {
           status: response.status,
           statusText: response.statusText,
         });
+        // A revoked/invalidated token keeps failing until it expires; drop it
+        // so the next sync fetches a fresh one.
+        if (response.status === 401) {
+          await this.ctx.storage.delete(TOKEN_CACHE_KEY);
+        }
         return null;
       }
 
@@ -445,25 +450,32 @@ export class TwitchHub extends DurableObject {
       grant_type: 'client_credentials',
     });
 
-    const response = await fetch('https://id.twitch.tv/oauth2/token', {
-      method: 'POST',
-      body: params,
-    });
-    const data = await response.json();
+    try {
+      const response = await fetch('https://id.twitch.tv/oauth2/token', {
+        method: 'POST',
+        body: params,
+      });
+      const data = await response.json();
 
-    if (!data.access_token) {
-      console.error('twitch_auth_failed', data);
+      if (!data.access_token) {
+        console.error('twitch_auth_failed', data);
+        return null;
+      }
+
+      const token = {
+        token: data.access_token,
+        expires: Date.now() + 50 * 60 * 1000,
+      };
+
+      await this.ctx.storage.put(TOKEN_CACHE_KEY, token);
+
+      return token.token;
+    } catch (error) {
+      console.error('twitch_auth_error', {
+        message: error instanceof Error ? error.message : String(error),
+      });
       return null;
     }
-
-    const token = {
-      token: data.access_token,
-      expires: Date.now() + 50 * 60 * 1000,
-    };
-
-    await this.ctx.storage.put(TOKEN_CACHE_KEY, token);
-
-    return token.token;
   }
 
   getClientId() {
