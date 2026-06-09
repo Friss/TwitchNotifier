@@ -3,10 +3,19 @@
   "version": "1.0.0",
   "description": "Twitch notifier chrome extension",
   "main": "index.js",
+  "scripts": {
+    "format": "prettier --write . --ignore-unknown",
+    "format:check": "prettier --check . --ignore-unknown",
+    "worker:dev": "yarn --cwd worker dev",
+    "worker:dev:remote": "yarn --cwd worker dev:remote",
+    "worker:check": "yarn --cwd worker check",
+    "worker:deploy": "yarn --cwd worker deploy",
+    "worker:typegen": "yarn --cwd worker typegen"
+  },
   "repository": "git@github.com:Friss/TwitchNotifier.git",
   "author": "Zachary Friss <friss@frissdesigns.com>",
   "license": "MIT",
   "devDependencies": {
-    "prettier": "2.8.1"
+    "prettier": "3.8.2"
   }
 }

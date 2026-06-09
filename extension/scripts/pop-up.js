@@ -10,6 +10,7 @@ const escapeHtml = (unsafe) => {
 
 const getPreviewUrl = (userName, width, height) =>
   `https://static-cdn.jtvnw.net/previews-ttv/live_user_${userName}-${width}x${height}.jpg`;
+
 let hideOffline = false;
 let hidePreviews = false;
 let hideStreamersOnlineCount = false;
@@ -63,8 +64,8 @@ const abbreviateViewerCount = (number) => {
   return number >= 1e6
     ? (number / 1e6).toFixed(1).replace(/\.0$/, '') + 'M'
     : number >= 1e3
-    ? (number / 1e3).toFixed(1).replace(/\.0$/, '') + 'K'
-    : number;
+      ? (number / 1e3).toFixed(1).replace(/\.0$/, '') + 'K'
+      : number;
 };
 
 const createStreamerEntry = (stream) => {
@@ -103,8 +104,8 @@ const createStreamerEntry = (stream) => {
             stream.username
           }'>
             ${escapeHtml(stream.user_name)} - ${escapeHtml(
-      stream.channel.status
-    )}
+              stream.channel.status
+            )}
           </a>
           <ul class="list-unstyled">
             <li>
