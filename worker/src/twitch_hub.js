@@ -9,6 +9,10 @@ const TWITCH_BATCH_LIMIT = 100;
 // Workers allow at most 6 simultaneous outbound connections, so cap how many
 // Twitch batches we fetch in parallel.
 const MAX_CONCURRENT_FETCHES = 6;
+// Durable Object SQLite allows at most 100 bound parameters per statement, so
+// chunk IN (...) lookups to stay under the limit for users tracking >100
+// channels.
+const SQL_BIND_LIMIT = 100;
 
 export class TwitchHub extends DurableObject {
   constructor(ctx, env) {
@@ -216,30 +220,32 @@ export class TwitchHub extends DurableObject {
   }
 
   getStoredStatuses(channels) {
-    if (channels.length === 0) {
-      return new Map();
-    }
-
-    const placeholders = channels.map(() => '?').join(', ');
-    const rows = this.ctx.storage.sql
-      .exec(
-        `
-          SELECT channel, is_live, payload, last_synced_at
-          FROM channel_status
-          WHERE channel IN (${placeholders})
-        `,
-        ...channels
-      )
-      .toArray();
-
     const result = new Map();
 
-    for (const row of rows) {
-      result.set(row.channel, {
-        isLive: row.is_live === 1,
-        payload: row.payload ? JSON.parse(row.payload) : null,
-        lastSyncedAt: row.last_synced_at,
-      });
+    // SQLite caps bound parameters at 100 per statement, so chunk the IN (...)
+    // lookup. Without this, status reads for users tracking >100 channels throw
+    // SQLITE_ERROR ("too many SQL variables").
+    for (let index = 0; index < channels.length; index += SQL_BIND_LIMIT) {
+      const chunk = channels.slice(index, index + SQL_BIND_LIMIT);
+      const placeholders = chunk.map(() => '?').join(', ');
+      const rows = this.ctx.storage.sql
+        .exec(
+          `
+            SELECT channel, is_live, payload, last_synced_at
+            FROM channel_status
+            WHERE channel IN (${placeholders})
+          `,
+          ...chunk
+        )
+        .toArray();
+
+      for (const row of rows) {
+        result.set(row.channel, {
+          isLive: row.is_live === 1,
+          payload: row.payload ? JSON.parse(row.payload) : null,
+          lastSyncedAt: row.last_synced_at,
+        });
+      }
     }
 
     return result;
