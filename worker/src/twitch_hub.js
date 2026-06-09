@@ -22,6 +22,11 @@ const MAX_FETCH_RETRIES = 2;
 const BASE_BACKOFF_MS = 200;
 const MAX_BACKOFF_MS = 2000;
 const MAX_RETRY_AFTER_MS = 3000;
+// Twitch login names are 1-25 chars of lowercase alphanumerics + underscore. A
+// single malformed value makes Helix reject the entire batch with a generic
+// 400 (it never says which one), so drop anything that can't be a real login
+// before it poisons a batch.
+const TWITCH_LOGIN = /^[a-z0-9_]{1,25}$/;
 
 export class TwitchHub extends DurableObject {
   constructor(ctx, env) {
@@ -558,7 +563,7 @@ function normalizeChannels(channels) {
       channels
         .filter((channel) => typeof channel === 'string')
         .map((channel) => channel.trim().toLowerCase())
-        .filter(Boolean)
+        .filter((channel) => TWITCH_LOGIN.test(channel))
     )
   );
 }

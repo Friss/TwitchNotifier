@@ -16,6 +16,12 @@ let transportMode = 'polling';
 let featureFlagRequest = null;
 let featureFlagCache = null;
 
+// Twitch login names are 1-25 chars of lowercase alphanumerics + underscore.
+// Drop anything else so a malformed stored value can't 400 the backend batch.
+const TWITCH_LOGIN = /^[a-z0-9_]{1,25}$/;
+const isValidTwitchLogin = (value) =>
+  typeof value === 'string' && TWITCH_LOGIN.test(value.trim().toLowerCase());
+
 const getPreviewUrl = (userName, width, height) =>
   `https://static-cdn.jtvnw.net/previews-ttv/live_user_${userName}-${width}x${height}.jpg`;
 
@@ -118,10 +124,15 @@ const handleStreamerUpdate = async (type, channel, streamData) => {
 
 const getTrackedUsernames = async () => {
   const storage = await chrome.storage.sync.get('twitchStreams');
+  const stored = storage.twitchStreams || [];
+  const valid = stored.filter(isValidTwitchLogin);
 
-  return Array.from(
-    new Set((storage.twitchStreams || []).map((stream) => stream.toLowerCase()))
-  );
+  // Self-heal: persist the cleaned list if any malformed values were dropped.
+  if (valid.length !== stored.length) {
+    await chrome.storage.sync.set({ twitchStreams: valid });
+  }
+
+  return Array.from(new Set(valid.map((stream) => stream.trim().toLowerCase())));
 };
 
 const fetchStreamerStatus = async (

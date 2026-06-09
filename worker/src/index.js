@@ -4,6 +4,9 @@ export { TwitchHub };
 
 const HUB_NAME = 'global';
 const VERSION = '3.2.0';
+// Twitch login names are 1-25 chars of lowercase alphanumerics + underscore.
+// Drop anything else so one malformed value can't 400 a whole Helix batch.
+const TWITCH_LOGIN = /^[a-z0-9_]{1,25}$/;
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
@@ -199,7 +202,7 @@ function normalizeChannels(channels) {
       channels
         .filter((channel) => typeof channel === 'string')
         .map((channel) => channel.trim().toLowerCase())
-        .filter(Boolean)
+        .filter((channel) => TWITCH_LOGIN.test(channel))
     )
   );
 }
