@@ -26,7 +26,10 @@ export default {
 
     try {
       if (url.pathname === '/ws') {
-        return getHubStub(env).fetch(request);
+        // Await async handlers so their rejections route through the catch
+        // below and return a graceful 500 instead of escaping as an uncaught
+        // exception (a `return <promise>` inside try/catch is not caught).
+        return await getHubStub(env).fetch(request);
       }
 
       if (request.method === 'GET' && url.pathname === '/feature-flags') {
@@ -34,7 +37,7 @@ export default {
       }
 
       if (request.method === 'POST' && url.pathname === '/channel-status') {
-        return handleChannelStatus(request, env);
+        return await handleChannelStatus(request, env);
       }
 
       if (
@@ -48,7 +51,7 @@ export default {
         request.method === 'GET' &&
         url.pathname.startsWith('/channel-preview')
       ) {
-        return handlePreviewImage(url);
+        return await handlePreviewImage(url);
       }
 
       if (request.method === 'GET' && url.pathname.startsWith('/version')) {
