@@ -95,6 +95,12 @@ li {
   margin-bottom: 20px;
 }
 
+/* Keep the title/details column from running into the preview image. Only
+   applies when previews are shown (text column is col-xs-6, image alongside). */
+.streamer-online .col-xs-6:first-child {
+  padding-right: 15px;
+}
+
 .remove-all {
   position: relative;
 }

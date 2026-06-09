@@ -1,0 +1,52 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "twitch-notifications-api",
+  "main": "src/index.js",
+  "account_id": "c440c3584c546bcb6ca3766d9cd58c1e",
+  "compatibility_date": "2026-06-09",
+  "compatibility_flags": ["nodejs_compat"],
+  // Bound to the existing twitch.theorycraft.gg hostname via a route (the DNS
+  // record already exists). A route attaches to the existing record rather than
+  // creating a Custom Domain, so deploys stay idempotent and avoid the 409
+  // "hostname already has externally managed DNS records" conflict.
+  "routes": [
+    {
+      "pattern": "twitch.theorycraft.gg/*",
+      "zone_name": "theorycraft.gg",
+    },
+  ],
+  "vars": {
+    "REALTIME_ROLLOUT_PERCENT": 0,
+    "REALTIME_ROLLOUT_SALT": "realtime-v1",
+    "REALTIME_FORCE_INSTALL_IDS": "friss-realtime-test",
+    "STATUS_TTL_SECONDS": 60,
+    "TRACKED_CHANNEL_TTL_SECONDS": 1800,
+  },
+  "triggers": {
+    "crons": ["* * * * *"],
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "head_sampling_rate": 1,
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.1,
+    },
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "TWITCH_HUB",
+        "class_name": "TwitchHub",
+      },
+    ],
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["TwitchHub"],
+    },
+  ],
+}
