@@ -7,8 +7,13 @@ const BACKGROUND_POLL_MINUTES = 5;
 const BASE_RECONNECT_DELAY_MS = 2000;
 const MAX_RECONNECT_DELAY_MS = 60000;
 const FEATURE_FLAG_TTL_MS = 5 * 60 * 1000;
+// Chrome (116+) resets the MV3 service-worker idle timer on WebSocket activity,
+// so a steady client ping is what keeps the socket — and the worker — alive
+// past the ~30s idle kill. The server auto-responds without waking the DO.
+const WS_PING_INTERVAL_MS = 20000;
 
 let webSocket = null;
+let pingInterval = null;
 let reconnectTimeout = null;
 let reconnectAttempts = 0;
 let websocketUrl = DEFAULT_WS_URL;
@@ -132,7 +137,9 @@ const getTrackedUsernames = async () => {
     await chrome.storage.sync.set({ twitchStreams: valid });
   }
 
-  return Array.from(new Set(valid.map((stream) => stream.trim().toLowerCase())));
+  return Array.from(
+    new Set(valid.map((stream) => stream.trim().toLowerCase()))
+  );
 };
 
 const fetchStreamerStatus = async (
@@ -254,6 +261,13 @@ const clearReconnectTimeout = () => {
   }
 };
 
+const clearPingInterval = () => {
+  if (pingInterval) {
+    clearInterval(pingInterval);
+    pingInterval = null;
+  }
+};
+
 const scheduleReconnect = () => {
   clearReconnectTimeout();
 
@@ -274,6 +288,7 @@ const scheduleReconnect = () => {
 
 const disconnectWebSocket = () => {
   clearReconnectTimeout();
+  clearPingInterval();
   reconnectAttempts = 0;
 
   if (webSocket) {
@@ -334,9 +349,22 @@ const connectWebSocket = async () => {
         channels: usernames,
       })
     );
+
+    clearPingInterval();
+    pingInterval = setInterval(() => {
+      if (webSocket && webSocket.readyState === WebSocket.OPEN) {
+        webSocket.send('ping');
+      }
+    }, WS_PING_INTERVAL_MS);
   };
 
   webSocket.onmessage = (event) => {
+    // The server auto-responds to our keepalive ping with a 'pong' text frame;
+    // it isn't JSON, so skip it before parsing.
+    if (event.data === 'pong') {
+      return;
+    }
+
     try {
       const message = JSON.parse(event.data);
 
@@ -350,6 +378,7 @@ const connectWebSocket = async () => {
 
   webSocket.onclose = () => {
     webSocket = null;
+    clearPingInterval();
 
     if (transportMode === 'realtime') {
       scheduleReconnect();
