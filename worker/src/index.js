@@ -164,7 +164,14 @@ function handleOptions(request) {
     request.headers.get('Access-Control-Request-Method') !== null &&
     request.headers.get('Access-Control-Request-Headers') !== null
   ) {
-    return new Response(null, { headers: CORS_HEADERS });
+    // Cache the preflight for a day so the extension's per-poll JSON POST stops
+    // triggering an OPTIONS round-trip every time (~46% of request volume).
+    return new Response(null, {
+      headers: {
+        ...CORS_HEADERS,
+        'Access-Control-Max-Age': '86400',
+      },
+    });
   }
 
   return new Response(null, {

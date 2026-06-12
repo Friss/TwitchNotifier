@@ -32,6 +32,20 @@ export class TwitchHub extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.sessions = new Map();
+    // Per-channel sync freshness, kept in memory so a no-op sync never has to
+    // write a row just to bump last_synced_at. Empty after eviction/restart, so
+    // every channel reads as stale until re-synced — the safe default.
+    this.lastSyncedAt = new Map();
+    // Channel → in-flight sync Promise, so concurrent polls for the same stale
+    // channel coalesce into a single Helix fetch instead of N.
+    this.syncsInFlight = new Map();
+
+    // Let the runtime answer client keepalive pings without waking the
+    // hibernated DO; the WS activity is what keeps Chrome's MV3 service worker
+    // from being killed for idleness.
+    this.ctx.setWebSocketAutoResponse(
+      new WebSocketRequestResponsePair('ping', 'pong')
+    );
 
     ctx.blockConcurrencyWhile(async () => {
       this.initializeSchema();
@@ -75,18 +89,37 @@ export class TwitchHub extends DurableObject {
     await this.trackChannels(normalized);
 
     const existing = this.getStoredStatuses(normalized);
-    const staleChannels =
-      options.refreshIfStale === false
-        ? []
-        : this.getStaleChannels(
-            normalized,
-            existing,
-            Date.now(),
-            this.getStatusTtlMs()
-          );
 
-    if (staleChannels.length > 0) {
-      await this.syncChannels(staleChannels);
+    if (options.refreshIfStale !== false) {
+      const staleChannels = this.getStaleChannels(
+        normalized,
+        Date.now(),
+        this.getStatusTtlMs()
+      );
+
+      // Cold channels have no row at all — a brand-new install must not get an
+      // empty response for channels we've never checked, so block on those.
+      // Stale-but-present channels already have a cached row: serve it now and
+      // refresh in the background so Twitch I/O stays off the request path
+      // (awaiting it serialized the DO and caused ~30s RPC timeouts under load).
+      const cold = staleChannels.filter((channel) => !existing.has(channel));
+      const staleButPresent = staleChannels.filter((channel) =>
+        existing.has(channel)
+      );
+
+      if (cold.length > 0) {
+        await this.syncChannelsCoalesced(cold);
+      }
+
+      if (staleButPresent.length > 0) {
+        // Fire-and-forget; the DO stays alive while the promise is pending. The
+        // .catch makes an unhandled rejection impossible.
+        this.syncChannelsCoalesced(staleButPresent).catch((error) => {
+          console.error('background_sync_error', {
+            message: error instanceof Error ? error.message : String(error),
+          });
+        });
+      }
     }
 
     return this.buildResponse(normalized, this.getStoredStatuses(normalized));
@@ -121,7 +154,7 @@ export class TwitchHub extends DurableObject {
 
     await this.trackChannels(activeSessionChannels, now);
 
-    const result = await this.syncChannels(activeSessionChannels);
+    const result = await this.syncChannelsCoalesced(activeSessionChannels);
 
     return {
       sessions,
@@ -133,6 +166,12 @@ export class TwitchHub extends DurableObject {
   async webSocketMessage(ws, message) {
     const text =
       typeof message === 'string' ? message : new TextDecoder().decode(message);
+
+    // Auto-response handles 'ping' without waking us, but tolerate bare
+    // ping/pong text frames reaching the handler rather than JSON.parse-ing them.
+    if (text === 'ping' || text === 'pong') {
+      return;
+    }
 
     let parsedMessage;
 
@@ -227,22 +266,72 @@ export class TwitchHub extends DurableObject {
   }
 
   async trackChannels(channels, now = Date.now()) {
-    const trackedUntil = now + this.getTrackingTtlMs();
+    if (channels.length === 0) {
+      return;
+    }
 
-    for (const channel of channels) {
+    const ttlMs = this.getTrackingTtlMs();
+    const trackedUntil = now + ttlMs;
+
+    // Refresh the TTL only when it actually matters: a row still more than half
+    // its TTL from expiring doesn't need rewriting. This drops the per-poll
+    // upsert storm to a write every ~half-TTL per channel.
+    const existing = this.getTrackedUntil(channels);
+    const halfTtlThreshold = now + ttlMs / 2;
+    const toUpsert = channels.filter((channel) => {
+      const until = existing.get(channel);
+      return until === undefined || until <= halfTtlThreshold;
+    });
+
+    // Batch into multi-row INSERTs. SQLite caps bound params at 100, and each
+    // row binds 3, so 33 rows per statement keeps us under the limit.
+    const rowsPerStatement = Math.floor(SQL_BIND_LIMIT / 3);
+    for (let index = 0; index < toUpsert.length; index += rowsPerStatement) {
+      const chunk = toUpsert.slice(index, index + rowsPerStatement);
+      const values = chunk.map(() => '(?, ?, ?)').join(', ');
+      const bindings = [];
+      for (const channel of chunk) {
+        bindings.push(channel, trackedUntil, now);
+      }
+
       this.ctx.storage.sql.exec(
         `
           INSERT INTO tracked_channels (channel, tracked_until, updated_at)
-          VALUES (?, ?, ?)
+          VALUES ${values}
           ON CONFLICT(channel) DO UPDATE SET
             tracked_until = MAX(tracked_channels.tracked_until, excluded.tracked_until),
             updated_at = excluded.updated_at
         `,
-        channel,
-        trackedUntil,
-        now
+        ...bindings
       );
     }
+  }
+
+  getTrackedUntil(channels) {
+    const result = new Map();
+
+    // SQLite caps bound parameters at 100, so chunk the IN (...) lookup the same
+    // way getStoredStatuses does for users tracking >100 channels.
+    for (let index = 0; index < channels.length; index += SQL_BIND_LIMIT) {
+      const chunk = channels.slice(index, index + SQL_BIND_LIMIT);
+      const placeholders = chunk.map(() => '?').join(', ');
+      const rows = this.ctx.storage.sql
+        .exec(
+          `
+            SELECT channel, tracked_until
+            FROM tracked_channels
+            WHERE channel IN (${placeholders})
+          `,
+          ...chunk
+        )
+        .toArray();
+
+      for (const row of rows) {
+        result.set(row.channel, row.tracked_until);
+      }
+    }
+
+    return result;
   }
 
   getStoredStatuses(channels) {
@@ -277,10 +366,10 @@ export class TwitchHub extends DurableObject {
     return result;
   }
 
-  getStaleChannels(channels, existing, now, ttlMs) {
+  getStaleChannels(channels, now, ttlMs) {
     return channels.filter((channel) => {
-      const cached = existing.get(channel);
-      return !cached || cached.lastSyncedAt < now - ttlMs;
+      const syncedAt = this.lastSyncedAt.get(channel);
+      return syncedAt === undefined || syncedAt < now - ttlMs;
     });
   }
 
@@ -366,12 +455,20 @@ export class TwitchHub extends DurableObject {
         continue;
       }
 
+      // Sync succeeded for this channel; record freshness in memory so the next
+      // poll can serve cache without a write. Set even when nothing changed —
+      // this is what replaces the unconditional last_synced_at row bump.
+      this.lastSyncedAt.set(channel, syncedAt);
+
       const nextStatus = liveStreams.get(channel) || null;
       const previousStatus = previous.get(channel);
       const wasLive =
         previousStatus && previousStatus.isLive && previousStatus.payload;
 
       if (nextStatus) {
+        // Live channels are written every sync so the payload (viewer count,
+        // title) stays current. There are only ~16 of 400+, so the write cost
+        // is negligible.
         liveChannelCount += 1;
         this.ctx.storage.sql.exec(
           `
@@ -394,7 +491,13 @@ export class TwitchHub extends DurableObject {
             data: nextStatus,
           });
         }
-      } else {
+      } else if (wasLive || !previousStatus) {
+        // Write on the live→offline transition, and once for a channel we've
+        // never synced before — without that first row it stays "cold" forever
+        // and every post-TTL poll for it awaits a Twitch fetch. Channels that
+        // were already offline (the overwhelming majority) are left untouched —
+        // rewriting their rows just to bump last_synced_at is the write
+        // amplification we moved into the in-memory lastSyncedAt map.
         this.ctx.storage.sql.exec(
           `
             INSERT INTO channel_status (channel, is_live, payload, last_synced_at)
@@ -422,6 +525,56 @@ export class TwitchHub extends DurableObject {
       liveChannels: liveChannelCount,
       failedChannels: failedChannels.size,
     };
+  }
+
+  // Coalescing wrapper around syncChannels: channels already being synced are
+  // dropped from the fetch batch so concurrent polls for the same stale channel
+  // share one Helix fetch. syncChannels stays the single place that
+  // fetches/writes/broadcasts; this only tracks the in-flight promises and
+  // clears them once the underlying sync settles.
+  async syncChannelsCoalesced(channels) {
+    const normalized = normalizeChannels(channels);
+    const pending = normalized.filter(
+      (channel) => !this.syncsInFlight.has(channel)
+    );
+
+    // Syncs already covering some of the requested channels. These must be
+    // joined before returning — a cold-path caller awaiting [a, b] while a is
+    // mid-sync elsewhere would otherwise build its response before a has any
+    // stored row and wrongly report it offline. One promise can cover many
+    // channels, so dedupe via Set.
+    const inFlight = new Set(
+      normalized
+        .map((channel) => this.syncsInFlight.get(channel))
+        .filter(Boolean)
+    );
+
+    if (pending.length === 0) {
+      // Every requested channel is already in flight; join the existing syncs
+      // but don't kick off a new fetch. Callers that spread the result (the
+      // cron) get a no-op summary rather than the joined batches' shapes.
+      await Promise.all(inFlight);
+      return {
+        channelsSynced: 0,
+        liveChannels: 0,
+        coalesced: true,
+      };
+    }
+
+    const promise = this.syncChannels(pending).finally(() => {
+      for (const channel of pending) {
+        if (this.syncsInFlight.get(channel) === promise) {
+          this.syncsInFlight.delete(channel);
+        }
+      }
+    });
+
+    for (const channel of pending) {
+      this.syncsInFlight.set(channel, promise);
+    }
+
+    const [result] = await Promise.all([promise, ...inFlight]);
+    return result;
   }
 
   async fetchLiveBatch(channels, token) {
@@ -483,10 +636,13 @@ export class TwitchHub extends DurableObject {
     });
 
     try {
-      const response = await fetchWithRetry('https://id.twitch.tv/oauth2/token', {
-        method: 'POST',
-        body: params,
-      });
+      const response = await fetchWithRetry(
+        'https://id.twitch.tv/oauth2/token',
+        {
+          method: 'POST',
+          body: params,
+        }
+      );
       const data = await response.json();
 
       if (!data.access_token) {
@@ -618,7 +774,11 @@ async function fetchWithRetry(url, options = {}, retries = MAX_FETCH_RETRIES) {
       continue;
     }
 
-    if (response.ok || !isRetryableStatus(response.status) || attempt >= retries) {
+    if (
+      response.ok ||
+      !isRetryableStatus(response.status) ||
+      attempt >= retries
+    ) {
       return response;
     }
 
