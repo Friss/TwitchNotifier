@@ -82,11 +82,23 @@ export default {
 
   async scheduled(controller, env, ctx) {
     const stub = getHubStub(env);
+    // Log the per-tick outcome so the realtime cron is observable during the
+    // rollout: active sessions, channels synced (≈ Twitch req/min), live count,
+    // failed batches, and whether the tick was a no-op (no sessions connected).
     ctx.waitUntil(
-      stub.syncTrackedChannels({
-        cron: controller.cron,
-        scheduledTime: controller.scheduledTime,
-      })
+      stub
+        .syncTrackedChannels({
+          cron: controller.cron,
+          scheduledTime: controller.scheduledTime,
+        })
+        .then((result) => {
+          console.log('cron_sync', result);
+        })
+        .catch((error) => {
+          console.error('cron_sync_error', {
+            message: error instanceof Error ? error.message : String(error),
+          });
+        })
     );
   },
 };
