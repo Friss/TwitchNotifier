@@ -57,6 +57,8 @@ export class TwitchHub extends DurableObject {
     server.serializeAttachment({ channels: [] });
     this.sessions.set(server, new Set());
 
+    console.log('ws_connect', { sessions: this.sessions.size });
+
     return new Response(null, {
       status: 101,
       webSocket: client,
@@ -105,9 +107,11 @@ export class TwitchHub extends DurableObject {
     // shared Twitch rate budget. Polling clients refresh their own stale
     // statuses on demand via getChannelStatus().
     const activeSessionChannels = this.getSessionChannels();
+    const sessions = this.sessions.size;
 
     if (activeSessionChannels.length === 0) {
       return {
+        sessions,
         channelsSynced: 0,
         liveChannels: 0,
         skipped: true,
@@ -120,6 +124,7 @@ export class TwitchHub extends DurableObject {
     const result = await this.syncChannels(activeSessionChannels);
 
     return {
+      sessions,
       ...result,
       metadata,
     };
@@ -145,6 +150,11 @@ export class TwitchHub extends DurableObject {
     this.sessions.set(ws, new Set(channels));
     ws.serializeAttachment({ channels });
 
+    console.log('ws_subscribe', {
+      channels: channels.length,
+      sessions: this.sessions.size,
+    });
+
     await this.trackChannels(channels);
 
     const currentState = this.buildResponse(
@@ -165,10 +175,12 @@ export class TwitchHub extends DurableObject {
 
   async webSocketClose(ws) {
     this.sessions.delete(ws);
+    console.log('ws_close', { sessions: this.sessions.size });
   }
 
   async webSocketError(ws) {
     this.sessions.delete(ws);
+    console.log('ws_error', { sessions: this.sessions.size });
   }
 
   initializeSchema() {
@@ -538,6 +550,7 @@ export class TwitchHub extends DurableObject {
 
   broadcast(channel, message) {
     const payload = JSON.stringify(message);
+    let recipients = 0;
 
     for (const [ws, subscribedChannels] of this.sessions.entries()) {
       if (!subscribedChannels.has(channel)) {
@@ -546,6 +559,7 @@ export class TwitchHub extends DurableObject {
 
       try {
         ws.send(payload);
+        recipients += 1;
       } catch (error) {
         this.sessions.delete(ws);
         console.warn('websocket_send_failed', {
@@ -554,6 +568,14 @@ export class TwitchHub extends DurableObject {
         });
       }
     }
+
+    // Confirms LIVE/OFFLINE transitions are actually delivered. recipients: 0
+    // means the transition fired but no connected session was subscribed.
+    console.log('ws_broadcast', {
+      type: message.type,
+      channel,
+      recipients,
+    });
   }
 }
 
