@@ -511,10 +511,12 @@ export class TwitchHub extends DurableObject {
           syncedAt
         );
 
-        this.broadcast(channel, {
-          type: 'OFFLINE',
-          channel,
-        });
+        if (wasLive) {
+          this.broadcast(channel, {
+            type: 'OFFLINE',
+            channel,
+          });
+        }
       }
     }
 
@@ -536,15 +538,22 @@ export class TwitchHub extends DurableObject {
       (channel) => !this.syncsInFlight.has(channel)
     );
 
+    // Syncs already covering some of the requested channels. These must be
+    // joined before returning — a cold-path caller awaiting [a, b] while a is
+    // mid-sync elsewhere would otherwise build its response before a has any
+    // stored row and wrongly report it offline. One promise can cover many
+    // channels, so dedupe via Set.
+    const inFlight = new Set(
+      normalized
+        .map((channel) => this.syncsInFlight.get(channel))
+        .filter(Boolean)
+    );
+
     if (pending.length === 0) {
       // Every requested channel is already in flight; join the existing syncs
       // but don't kick off a new fetch. Callers that spread the result (the
       // cron) get a no-op summary rather than the joined batches' shapes.
-      await Promise.all(
-        normalized
-          .map((channel) => this.syncsInFlight.get(channel))
-          .filter(Boolean)
-      );
+      await Promise.all(inFlight);
       return {
         channelsSynced: 0,
         liveChannels: 0,
@@ -564,7 +573,8 @@ export class TwitchHub extends DurableObject {
       this.syncsInFlight.set(channel, promise);
     }
 
-    return promise;
+    const [result] = await Promise.all([promise, ...inFlight]);
+    return result;
   }
 
   async fetchLiveBatch(channels, token) {
