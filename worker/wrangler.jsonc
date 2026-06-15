@@ -16,9 +16,6 @@
     },
   ],
   "vars": {
-    "REALTIME_ROLLOUT_PERCENT": 10,
-    "REALTIME_ROLLOUT_SALT": "realtime-v1",
-    "REALTIME_FORCE_INSTALL_IDS": "friss-realtime-test",
     "STATUS_TTL_SECONDS": 60,
     "TRACKED_CHANNEL_TTL_SECONDS": 1800,
   },

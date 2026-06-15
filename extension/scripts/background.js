@@ -1,12 +1,10 @@
 const API_BASE_URL = 'https://twitch.theorycraft.gg';
 const API_URL = `${API_BASE_URL}/channel-status`;
-const FEATURE_FLAGS_URL = `${API_BASE_URL}/feature-flags`;
-const DEFAULT_WS_URL = 'wss://twitch.theorycraft.gg/ws';
+const WS_URL = 'wss://twitch.theorycraft.gg/ws';
 const BACKGROUND_ALARM_NAME = 'backgroundFetch';
 const BACKGROUND_POLL_MINUTES = 5;
 const BASE_RECONNECT_DELAY_MS = 2000;
 const MAX_RECONNECT_DELAY_MS = 60000;
-const FEATURE_FLAG_TTL_MS = 5 * 60 * 1000;
 // Chrome (116+) resets the MV3 service-worker idle timer on WebSocket activity,
 // so a steady client ping is what keeps the socket — and the worker — alive
 // past the ~30s idle kill. The server auto-responds without waking the DO.
@@ -16,10 +14,11 @@ let webSocket = null;
 let pingInterval = null;
 let reconnectTimeout = null;
 let reconnectAttempts = 0;
-let websocketUrl = DEFAULT_WS_URL;
-let transportMode = 'polling';
-let featureFlagRequest = null;
-let featureFlagCache = null;
+// Whether the next SNAPSHOT frame should fire notifications. Suppressed for the
+// first sync after a cold start (browser launch / install) so we don't alert
+// for channels that were already live; true for reconnects so we catch up on
+// anything that went live while the socket was down.
+let pendingSnapshotNotify = false;
 
 // Twitch login names are 1-25 chars of lowercase alphanumerics + underscore.
 // Drop anything else so a malformed stored value can't 400 the backend batch.
@@ -193,67 +192,6 @@ const fetchStreamerStatus = async (
   }
 };
 
-const ensureInstallId = async () => {
-  const data = await chrome.storage.local.get(['rolloutInstallId']);
-
-  if (data.rolloutInstallId) {
-    return data.rolloutInstallId;
-  }
-
-  const rolloutInstallId = crypto.randomUUID
-    ? crypto.randomUUID()
-    : Array.from(crypto.getRandomValues(new Uint8Array(16)))
-        .map((value) => value.toString(16).padStart(2, '0'))
-        .join('');
-
-  await chrome.storage.local.set({ rolloutInstallId });
-
-  return rolloutInstallId;
-};
-
-const fetchFeatureFlags = async () => {
-  if (featureFlagCache && featureFlagCache.expires > Date.now()) {
-    return featureFlagCache.flags;
-  }
-
-  if (featureFlagRequest) {
-    return featureFlagRequest;
-  }
-
-  // Resolve the error handling and cache write inside the shared promise so
-  // every concurrent awaiter gets the flags-or-fallback value and none can
-  // observe an unhandled rejection.
-  featureFlagRequest = (async () => {
-    try {
-      const installId = await ensureInstallId();
-      const response = await fetch(
-        `${FEATURE_FLAGS_URL}?installId=${encodeURIComponent(installId)}`
-      );
-
-      if (!response.ok) {
-        throw new Error(`Feature flags failed with ${response.status}`);
-      }
-
-      const flags = await response.json();
-      featureFlagCache = {
-        flags,
-        expires: Date.now() + FEATURE_FLAG_TTL_MS,
-      };
-      return flags;
-    } catch (error) {
-      console.error('Feature Flag Error', error);
-      return {
-        transport: 'polling',
-        websocketUrl: DEFAULT_WS_URL,
-      };
-    } finally {
-      featureFlagRequest = null;
-    }
-  })();
-
-  return featureFlagRequest;
-};
-
 const clearReconnectTimeout = () => {
   if (reconnectTimeout) {
     clearTimeout(reconnectTimeout);
@@ -286,25 +224,6 @@ const scheduleReconnect = () => {
   }, delay + jitter);
 };
 
-const disconnectWebSocket = () => {
-  clearReconnectTimeout();
-  clearPingInterval();
-  reconnectAttempts = 0;
-
-  if (webSocket) {
-    const socket = webSocket;
-    webSocket = null;
-    socket.onclose = null;
-    socket.onerror = null;
-
-    try {
-      socket.close();
-    } catch (error) {
-      console.warn('WebSocket Close Error', error);
-    }
-  }
-};
-
 const ensurePollingAlarm = async () => {
   const backgroundAlarm = await chrome.alarms.get(BACKGROUND_ALARM_NAME);
 
@@ -315,11 +234,21 @@ const ensurePollingAlarm = async () => {
   }
 };
 
-const connectWebSocket = async () => {
-  if (transportMode !== 'realtime') {
-    return;
-  }
+// Subscribe (or re-subscribe) the open socket to a channel set. `snapshot: true`
+// asks the server to reply with one SNAPSHOT frame carrying the full live set so
+// we can reconcile our entire known list in one pass.
+const subscribe = (channels, notifyOnSnapshot) => {
+  pendingSnapshotNotify = notifyOnSnapshot;
+  webSocket.send(
+    JSON.stringify({
+      action: 'subscribe',
+      channels,
+      snapshot: true,
+    })
+  );
+};
 
+const connectWebSocket = async (notifyOnSnapshot = true) => {
   // Resolve usernames before the readyState check so the check and the
   // WebSocket instantiation run synchronously back-to-back. Otherwise two
   // concurrent callers could both pass the check during the await and open
@@ -338,17 +267,12 @@ const connectWebSocket = async () => {
     return;
   }
 
-  webSocket = new WebSocket(websocketUrl);
+  webSocket = new WebSocket(WS_URL);
 
   webSocket.onopen = () => {
     clearReconnectTimeout();
     reconnectAttempts = 0;
-    webSocket.send(
-      JSON.stringify({
-        action: 'subscribe',
-        channels: usernames,
-      })
-    );
+    subscribe(usernames, notifyOnSnapshot);
 
     clearPingInterval();
     pingInterval = setInterval(() => {
@@ -368,6 +292,18 @@ const connectWebSocket = async () => {
     try {
       const message = JSON.parse(event.data);
 
+      if (message.type === 'SNAPSHOT') {
+        // Authoritative live set for the whole subscription: add and notify for
+        // newly-live channels, prune any that are no longer live. This is the
+        // reconnect-time reconcile that lets the socket recover full state
+        // without an HTTP poll.
+        void syncKnownOnlineStreamers(
+          message.live || {},
+          pendingSnapshotNotify
+        );
+        return;
+      }
+
       if (message.type === 'LIVE' || message.type === 'OFFLINE') {
         void handleStreamerUpdate(message.type, message.channel, message.data);
       }
@@ -379,10 +315,7 @@ const connectWebSocket = async () => {
   webSocket.onclose = () => {
     webSocket = null;
     clearPingInterval();
-
-    if (transportMode === 'realtime') {
-      scheduleReconnect();
-    }
+    scheduleReconnect();
   };
 
   webSocket.onerror = (error) => {
@@ -390,27 +323,12 @@ const connectWebSocket = async () => {
   };
 };
 
-const applyTransportMode = async (flags) => {
-  transportMode = flags.transport === 'realtime' ? 'realtime' : 'polling';
-  websocketUrl = flags.websocketUrl || DEFAULT_WS_URL;
-
-  // Always keep the polling alarm running as a fallback. In realtime mode the
-  // alarm handler only polls when the socket isn't open, so a failed/flapping
-  // WebSocket never leaves the user without updates.
+// Realtime is the only transport. Keep the alarm registered — it's the MV3
+// heartbeat that wakes the killed service worker to re-open a dropped socket —
+// and make sure the socket is connected.
+const ensureRealtime = async (notifyOnSnapshot = true) => {
   await ensurePollingAlarm();
-
-  if (transportMode === 'realtime') {
-    await connectWebSocket();
-    return;
-  }
-
-  disconnectWebSocket();
-};
-
-const syncTransportMode = async () => {
-  const flags = await fetchFeatureFlags();
-  await applyTransportMode(flags);
-  return flags;
+  await connectWebSocket(notifyOnSnapshot);
 };
 
 const refreshBackgroundState = async (sendNotification = false) => {
@@ -419,8 +337,13 @@ const refreshBackgroundState = async (sendNotification = false) => {
 };
 
 const initializeBackground = async () => {
-  await syncTransportMode();
-  await refreshBackgroundState(false);
+  // Cold start: connect and let the SNAPSHOT populate state without notifying
+  // (its channels were already live before launch). Only HTTP-poll if a socket
+  // couldn't be opened at all (e.g. no tracked channels — which clears state).
+  await ensureRealtime(false);
+  if (!webSocket) {
+    await refreshBackgroundState(false);
+  }
 };
 
 const handleClick = (id) => {
@@ -436,11 +359,11 @@ const handleClick = (id) => {
 const onRequest = (request, sender, callback) => {
   if (request.action === 'fetchStreamerStatus') {
     void (async () => {
-      await syncTransportMode();
+      // The popup wants current status now, so fetch it directly (and return it
+      // via the callback); the fetch already reconciled state, so the socket's
+      // snapshot shouldn't re-notify.
       await fetchStreamerStatus(request.usernames, callback, false);
-      if (transportMode === 'realtime') {
-        await connectWebSocket();
-      }
+      await connectWebSocket(false);
     })();
     return true;
   }
@@ -464,23 +387,19 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 
   void (async () => {
-    // The alarm may have restarted the service worker, resetting module
-    // globals to their defaults (transportMode='polling', webSocket=null).
-    // Re-resolve transport first so realtime installs reconnect their socket
-    // instead of silently degrading to polling.
-    await syncTransportMode();
+    // The alarm is the MV3 heartbeat: it may have restarted the service worker
+    // (resetting module globals, webSocket=null) and is the only thing that can
+    // wake us to re-open a socket that died while we were killed. Reconnect
+    // rather than poll — a reconnected socket recovers its full state from the
+    // server's SNAPSHOT frame, notifying for anything that went live meanwhile.
+    await ensureRealtime();
 
-    // In realtime mode the socket pushes updates, so only poll as a fallback
-    // when it isn't currently open.
-    if (
-      transportMode === 'realtime' &&
-      webSocket &&
-      webSocket.readyState === WebSocket.OPEN
-    ) {
-      return;
+    // Only fall back to an HTTP poll if no socket could be opened at all (e.g.
+    // there are no tracked channels, which clears state). A connecting or open
+    // socket reconciles via its snapshot.
+    if (!webSocket) {
+      await refreshBackgroundState(true);
     }
-
-    await refreshBackgroundState(true);
   })();
 });
 
@@ -499,24 +418,16 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
   if (area === 'sync' && changes.twitchStreams) {
     void (async () => {
-      await syncTransportMode();
-      if (transportMode === 'realtime') {
-        // A subscribe message replaces the session's channel set, so reuse the
-        // open socket rather than tearing it down and reconnecting.
-        if (webSocket && webSocket.readyState === WebSocket.OPEN) {
-          const usernames = await getTrackedUsernames();
-          webSocket.send(
-            JSON.stringify({
-              action: 'subscribe',
-              channels: usernames,
-            })
-          );
-        } else {
-          await connectWebSocket();
-        }
+      // A subscribe message replaces the session's channel set, so reuse the
+      // open socket rather than tearing it down and reconnecting. The SNAPSHOT
+      // reply reconciles state for the new list (including pruning removed
+      // channels) without notifying — the user just edited the list.
+      if (webSocket && webSocket.readyState === WebSocket.OPEN) {
+        const usernames = await getTrackedUsernames();
+        subscribe(usernames, false);
+      } else {
+        await connectWebSocket(false);
       }
-
-      await refreshBackgroundState(false);
     })();
   }
 });
