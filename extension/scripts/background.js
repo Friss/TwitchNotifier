@@ -394,10 +394,14 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     // server's SNAPSHOT frame, notifying for anything that went live meanwhile.
     await ensureRealtime();
 
-    // Only fall back to an HTTP poll if no socket could be opened at all (e.g.
-    // there are no tracked channels, which clears state). A connecting or open
-    // socket reconciles via its snapshot.
-    if (!webSocket) {
+    // Fall back to an HTTP poll whenever the socket isn't actually OPEN: a
+    // SNAPSHOT can only arrive once the handshake completes, so a missing,
+    // still-connecting, or hung/failing socket would otherwise leave the user
+    // without updates until the next alarm. When the socket is already open it
+    // pushes updates itself, so the poll is skipped. The poll reconciles via
+    // syncKnownOnlineStreamers, which dedupes against known state, so a poll
+    // racing an eventual SNAPSHOT can't double-notify.
+    if (!webSocket || webSocket.readyState !== WebSocket.OPEN) {
       await refreshBackgroundState(true);
     }
   })();
@@ -418,12 +422,25 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
   if (area === 'sync' && changes.twitchStreams) {
     void (async () => {
+      const usernames = await getTrackedUsernames();
+
+      // No channels left to track: connectWebSocket() is a no-op for an empty
+      // list, so clear local state directly or the badge/title keep showing
+      // stale live channels. Reset an open socket's subscription to empty too
+      // so the server stops tracking those channels for this session.
+      if (usernames.length === 0) {
+        if (webSocket && webSocket.readyState === WebSocket.OPEN) {
+          subscribe([], false);
+        }
+        await clearKnownOnlineStreamers();
+        return;
+      }
+
       // A subscribe message replaces the session's channel set, so reuse the
       // open socket rather than tearing it down and reconnecting. The SNAPSHOT
       // reply reconciles state for the new list (including pruning removed
       // channels) without notifying — the user just edited the list.
       if (webSocket && webSocket.readyState === WebSocket.OPEN) {
-        const usernames = await getTrackedUsernames();
         subscribe(usernames, false);
       } else {
         await connectWebSocket(false);
