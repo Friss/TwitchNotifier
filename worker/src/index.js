@@ -3,7 +3,7 @@ import { TwitchHub } from './twitch_hub.js';
 export { TwitchHub };
 
 const HUB_NAME = 'global';
-const VERSION = '3.2.0';
+const VERSION = '3.4.0';
 // Twitch login names are 1-25 chars of lowercase alphanumerics + underscore.
 // Drop anything else so one malformed value can't 400 a whole Helix batch.
 const TWITCH_LOGIN = /^[a-z0-9_]{1,25}$/;
@@ -36,7 +36,7 @@ export default {
       }
 
       if (request.method === 'GET' && url.pathname === '/feature-flags') {
-        return handleFeatureFlags(request, env);
+        return handleFeatureFlags(request);
       }
 
       if (request.method === 'POST' && url.pathname === '/channel-status') {
@@ -58,10 +58,7 @@ export default {
       }
 
       if (request.method === 'GET' && url.pathname.startsWith('/version')) {
-        return jsonResponse({
-          version: VERSION,
-          rolloutPercent: getRolloutPercent(env),
-        });
+        return jsonResponse({ version: VERSION });
       }
 
       return new Response('Not Found', { status: 404 });
@@ -118,27 +115,20 @@ async function handleChannelStatus(request, env) {
   return jsonResponse(response);
 }
 
-function handleFeatureFlags(request, env) {
+// Realtime is fully rolled out, so every client is told to use the WebSocket
+// transport. The extension still keeps polling running as an automatic fallback
+// whenever its socket isn't open, so a DO hiccup degrades gracefully without a
+// server-side flag. Kept as an endpoint (rather than removed) so older installs
+// that still poll it keep getting a valid response.
+function handleFeatureFlags(request) {
   const url = new URL(request.url);
-  const installId = url.searchParams.get('installId') || '';
-  const rolloutPercent = getRolloutPercent(env);
-  const featureSalt = env.REALTIME_ROLLOUT_SALT || 'realtime-v1';
-  const bucket = installId ? stableBucket(`${featureSalt}:${installId}`) : 100;
-  // Force-enable realtime for explicitly allowlisted install IDs regardless of
-  // the rollout percentage. Lets us exercise the realtime path in production
-  // without flipping the whole audience off the polling path.
-  const forced = isForcedInstallId(installId, env);
-  const realtimeEnabled =
-    forced || (installId !== '' && bucket < rolloutPercent);
 
   return jsonResponse({
     features: {
-      realtimeNotifications: realtimeEnabled,
+      realtimeNotifications: true,
     },
-    transport: realtimeEnabled ? 'realtime' : 'polling',
-    rolloutPercent,
+    transport: 'realtime',
     websocketUrl: `wss://${url.host}/ws`,
-    featureVersion: featureSalt,
   });
 }
 
@@ -195,26 +185,6 @@ function getHubStub(env) {
   return env.TWITCH_HUB.getByName(HUB_NAME);
 }
 
-function isForcedInstallId(installId, env) {
-  if (!installId) {
-    return false;
-  }
-
-  return (env.REALTIME_FORCE_INSTALL_IDS || '')
-    .split(',')
-    .map((id) => id.trim())
-    .filter(Boolean)
-    .includes(installId);
-}
-
-function getRolloutPercent(env) {
-  const raw = Number(env.REALTIME_ROLLOUT_PERCENT ?? 0);
-  if (!Number.isFinite(raw)) {
-    return 0;
-  }
-  return Math.max(0, Math.min(100, Math.floor(raw)));
-}
-
 function normalizeChannels(channels) {
   return Array.from(
     new Set(
@@ -224,15 +194,4 @@ function normalizeChannels(channels) {
         .filter((channel) => TWITCH_LOGIN.test(channel))
     )
   );
-}
-
-function stableBucket(input) {
-  let hash = 2166136261;
-
-  for (let i = 0; i < input.length; i++) {
-    hash ^= input.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-
-  return (hash >>> 0) % 100;
 }

@@ -201,6 +201,17 @@ export class TwitchHub extends DurableObject {
       this.getStoredStatuses(channels)
     );
 
+    // Snapshot-aware clients (subscribe with `snapshot: true`) get the full
+    // live set in one frame so they can reconcile their entire known list on
+    // (re)connect — notifying for newly-live channels and pruning any that are
+    // no longer live — which lets them rely on reconnect instead of an HTTP
+    // polling fallback. Legacy clients only understand per-channel LIVE/OFFLINE
+    // frames, so keep emitting one LIVE per live channel for them.
+    if (parsedMessage.snapshot === true) {
+      ws.send(JSON.stringify({ type: 'SNAPSHOT', live: currentState }));
+      return;
+    }
+
     for (const channel of Object.keys(currentState)) {
       ws.send(
         JSON.stringify({
