@@ -11,10 +11,11 @@ const escapeHtml = (unsafe) => {
 const getPreviewUrl = (userName, width, height) =>
   `https://static-cdn.jtvnw.net/previews-ttv/live_user_${userName}-${width}x${height}.jpg`;
 
-// Twitch login names are 1-25 chars of lowercase alphanumerics + underscore.
-// Anything else makes the backend's Helix batch 400, so reject it on add and
-// strip it from stored data on load.
-const TWITCH_LOGIN = /^[a-z0-9_]{1,25}$/;
+// Twitch login names are 1-25 chars of lowercase alphanumerics + underscore and
+// must NOT begin with an underscore. Anything else makes the backend's Helix
+// batch 400, so reject it on add and strip it from stored data on load. Keep in
+// sync with the worker's TWITCH_LOGIN (worker/src/twitch_hub.js).
+const TWITCH_LOGIN = /^[a-z0-9][a-z0-9_]{0,24}$/;
 const isValidTwitchLogin = (value) =>
   typeof value === 'string' && TWITCH_LOGIN.test(value.trim().toLowerCase());
 

@@ -773,7 +773,10 @@ export class TwitchHub extends DurableObject {
   }
 }
 
-function normalizeChannels(channels) {
+// Exported so index.js's /channel-status handler validates with the exact same
+// rules — keeping a single source of truth for TWITCH_LOGIN avoids the two
+// copies drifting and letting bad logins reach the DO.
+export function normalizeChannels(channels) {
   return Array.from(
     new Set(
       channels

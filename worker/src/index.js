@@ -1,12 +1,9 @@
-import { TwitchHub } from './twitch_hub.js';
+import { TwitchHub, normalizeChannels } from './twitch_hub.js';
 
 export { TwitchHub };
 
 const HUB_NAME = 'global';
 const VERSION = '3.4.0';
-// Twitch login names are 1-25 chars of lowercase alphanumerics + underscore.
-// Drop anything else so one malformed value can't 400 a whole Helix batch.
-const TWITCH_LOGIN = /^[a-z0-9_]{1,25}$/;
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
@@ -183,15 +180,4 @@ function jsonResponse(data, init = {}) {
 
 function getHubStub(env) {
   return env.TWITCH_HUB.getByName(HUB_NAME);
-}
-
-function normalizeChannels(channels) {
-  return Array.from(
-    new Set(
-      channels
-        .filter((channel) => typeof channel === 'string')
-        .map((channel) => channel.trim().toLowerCase())
-        .filter((channel) => TWITCH_LOGIN.test(channel))
-    )
-  );
 }
