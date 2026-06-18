@@ -20,9 +20,11 @@ let reconnectAttempts = 0;
 // anything that went live while the socket was down.
 let pendingSnapshotNotify = false;
 
-// Twitch login names are 1-25 chars of lowercase alphanumerics + underscore.
-// Drop anything else so a malformed stored value can't 400 the backend batch.
-const TWITCH_LOGIN = /^[a-z0-9_]{1,25}$/;
+// Twitch login names are 1-25 chars of lowercase alphanumerics + underscore and
+// must NOT begin with an underscore. Drop anything else so a malformed stored
+// value can't 400 the backend batch. Keep in sync with the worker's
+// TWITCH_LOGIN (worker/src/twitch_hub.js).
+const TWITCH_LOGIN = /^[a-z0-9][a-z0-9_]{0,24}$/;
 const isValidTwitchLogin = (value) =>
   typeof value === 'string' && TWITCH_LOGIN.test(value.trim().toLowerCase());
 
