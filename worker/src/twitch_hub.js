@@ -22,11 +22,16 @@ const MAX_FETCH_RETRIES = 2;
 const BASE_BACKOFF_MS = 200;
 const MAX_BACKOFF_MS = 2000;
 const MAX_RETRY_AFTER_MS = 3000;
-// Twitch login names are 1-25 chars of lowercase alphanumerics + underscore. A
-// single malformed value makes Helix reject the entire batch with a generic
-// 400 (it never says which one), so drop anything that can't be a real login
-// before it poisons a batch.
-const TWITCH_LOGIN = /^[a-z0-9_]{1,25}$/;
+// Twitch login names are 1-25 chars of lowercase alphanumerics + underscore but
+// must NOT begin with an underscore. A single malformed value makes Helix reject
+// the entire batch with a generic 400 "Malformed query params." (it never says
+// which one), so drop anything that can't be a real login before it poisons a
+// batch. The earlier /^[a-z0-9_]{1,25}$/ let leading-underscore values through
+// (e.g. "___", "_test", "_gocchan_"), which Twitch rejects — confirmed in prod
+// logs as the source of the persistent 400s. Length stays permissive (1+) so
+// legacy short accounts aren't silently dropped; only the leading underscore,
+// the proven offender, is excluded.
+const TWITCH_LOGIN = /^[a-z0-9][a-z0-9_]{0,24}$/;
 
 export class TwitchHub extends DurableObject {
   constructor(ctx, env) {
@@ -602,9 +607,29 @@ export class TwitchHub extends DurableObject {
       });
 
       if (!response.ok) {
+        // Helix returns a JSON body describing the exact failure (e.g.
+        // {"error":"Bad Request","status":400,"message":"Malformed query
+        // parameter \"user_login\"..."}). Surface it — plus the batch shape and
+        // a channel sample — so a 400 can be traced to the offending input. Read
+        // defensively: the body may be empty or non-JSON, and parsing must never
+        // mask the original failure.
+        let body = null;
+        try {
+          // Helix error bodies are tiny; the generous cap only trims a
+          // pathological upstream error page, never a real Twitch message.
+          body = (await response.text()).slice(0, 2000);
+        } catch {
+          body = '<unreadable>';
+        }
+        // Log the full batch (capped at TWITCH_BATCH_LIMIT = 100) rather than a
+        // sample: a 400 is usually one offending login, which could sit anywhere
+        // in the batch. This is an error-only path, so verbosity is cheap.
         console.error('twitch_fetch_failed', {
           status: response.status,
           statusText: response.statusText,
+          body,
+          batchSize: channels.length,
+          channels,
         });
         // A revoked/invalidated token keeps failing until it expires; drop it
         // so the next sync fetches a fresh one.
@@ -620,6 +645,8 @@ export class TwitchHub extends DurableObject {
     } catch (error) {
       console.error('twitch_fetch_error', {
         message: error instanceof Error ? error.message : String(error),
+        batchSize: channels.length,
+        channels,
       });
       return null;
     }
@@ -806,6 +833,11 @@ async function fetchWithRetry(url, options = {}, retries = MAX_FETCH_RETRIES) {
 }
 
 function isRetryableStatus(status) {
+  // Only rate-limits and server errors are transient. We do NOT retry 400:
+  // Helix's 400 "Malformed query params." is deterministic on batch content (an
+  // invalid login such as a leading-underscore name poisons the whole batch),
+  // so retrying just triples the call count and still fails. The fix is to keep
+  // bad logins out of the batch (see TWITCH_LOGIN), not to retry.
   return status === 429 || status >= 500;
 }
 
