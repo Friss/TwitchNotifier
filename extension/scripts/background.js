@@ -192,7 +192,18 @@ const fetchStreamerStatus = async (
 
   try {
     const streamersLive = await fetchChannelStatus(normalizedUsernames);
-    await syncKnownOnlineStreamers(streamersLive, sendNotification);
+
+    // When the realtime socket is open it is authoritative for
+    // knownOnlineStreamers (LIVE/OFFLINE deltas plus the SNAPSHOT reconcile).
+    // This HTTP response can be served from the worker's short-lived isolate
+    // cache and may lag a transition the socket has already applied, so
+    // reconciling from it here would clobber newer realtime state — dropping a
+    // just-live channel or resurrecting a just-offline one. Keep the HTTP fetch
+    // display-only while the socket carries updates; only reconcile from it
+    // when the socket isn't (cold start, socket down, or old poll-only clients).
+    if (!webSocket || webSocket.readyState !== WebSocket.OPEN) {
+      await syncKnownOnlineStreamers(streamersLive, sendNotification);
+    }
 
     if (callback) {
       callback(
