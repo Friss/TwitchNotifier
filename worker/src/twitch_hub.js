@@ -4,7 +4,13 @@ const STREAMS_URI = 'https://api.twitch.tv/helix/streams?first=100';
 const DEFAULT_CLIENT_ID = 'kimne78kx3ncx6brgo4mv6wki5h1ko';
 const TOKEN_CACHE_KEY = 'twitch_auth_token';
 const DEFAULT_STATUS_TTL_MS = 60_000;
-const DEFAULT_TRACKING_TTL_MS = 30 * 60_000;
+// A still-live channel is only rewritten when its viewer count moves
+// enough to change the number the popup actually displays — there's no point
+// persisting a change the user can't see. The popup abbreviates to 0.1K / 0.1M
+// above 1000 (see abbreviateViewers, mirrored from pop-up.js), so the effective
+// step grows with the count. The absolute floor keeps the exact (<1000) range
+// from writing on ±1 jitter.
+const VIEWER_WRITE_FLOOR = 5;
 const TWITCH_BATCH_LIMIT = 100;
 // Workers allow at most 6 simultaneous outbound connections, so cap how many
 // Twitch batches we fetch in parallel.
@@ -91,8 +97,6 @@ export class TwitchHub extends DurableObject {
       return {};
     }
 
-    await this.trackChannels(normalized);
-
     const existing = this.getStoredStatuses(normalized);
 
     if (options.refreshIfStale !== false) {
@@ -131,14 +135,6 @@ export class TwitchHub extends DurableObject {
   }
 
   async syncTrackedChannels(metadata = {}) {
-    const now = Date.now();
-
-    // Prune expired tracking rows regardless of whether we sync this tick.
-    this.ctx.storage.sql.exec(
-      'DELETE FROM tracked_channels WHERE tracked_until < ?',
-      now
-    );
-
     // The cron exists to push live/offline transitions to connected
     // WebSocket clients. With no active sessions there is nothing to
     // broadcast, so skip the Twitch sync entirely and avoid burning the
@@ -156,8 +152,6 @@ export class TwitchHub extends DurableObject {
         metadata,
       };
     }
-
-    await this.trackChannels(activeSessionChannels, now);
 
     const result = await this.syncChannelsCoalesced(activeSessionChannels);
 
@@ -199,8 +193,6 @@ export class TwitchHub extends DurableObject {
       sessions: this.sessions.size,
     });
 
-    await this.trackChannels(channels);
-
     const currentState = this.buildResponse(
       channels,
       this.getStoredStatuses(channels)
@@ -239,13 +231,12 @@ export class TwitchHub extends DurableObject {
   }
 
   initializeSchema() {
-    this.ctx.storage.sql.exec(`
-      CREATE TABLE IF NOT EXISTS tracked_channels (
-        channel TEXT PRIMARY KEY,
-        tracked_until INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      )
-    `);
+    // Drop the legacy tracked_channels table. The cron syncs the live
+    // WebSocket session set (getSessionChannels, rebuilt from socket
+    // attachments) and pollers refresh on demand via getChannelStatus, so
+    // nothing read this table — it was write-only churn (~85% of DO row
+    // writes). IF EXISTS makes this a no-op once the table is gone.
+    this.ctx.storage.sql.exec(`DROP TABLE IF EXISTS tracked_channels`);
 
     this.ctx.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS channel_status (
@@ -279,75 +270,6 @@ export class TwitchHub extends DurableObject {
     }
 
     return Array.from(channels);
-  }
-
-  async trackChannels(channels, now = Date.now()) {
-    if (channels.length === 0) {
-      return;
-    }
-
-    const ttlMs = this.getTrackingTtlMs();
-    const trackedUntil = now + ttlMs;
-
-    // Refresh the TTL only when it actually matters: a row still more than half
-    // its TTL from expiring doesn't need rewriting. This drops the per-poll
-    // upsert storm to a write every ~half-TTL per channel.
-    const existing = this.getTrackedUntil(channels);
-    const halfTtlThreshold = now + ttlMs / 2;
-    const toUpsert = channels.filter((channel) => {
-      const until = existing.get(channel);
-      return until === undefined || until <= halfTtlThreshold;
-    });
-
-    // Batch into multi-row INSERTs. SQLite caps bound params at 100, and each
-    // row binds 3, so 33 rows per statement keeps us under the limit.
-    const rowsPerStatement = Math.floor(SQL_BIND_LIMIT / 3);
-    for (let index = 0; index < toUpsert.length; index += rowsPerStatement) {
-      const chunk = toUpsert.slice(index, index + rowsPerStatement);
-      const values = chunk.map(() => '(?, ?, ?)').join(', ');
-      const bindings = [];
-      for (const channel of chunk) {
-        bindings.push(channel, trackedUntil, now);
-      }
-
-      this.ctx.storage.sql.exec(
-        `
-          INSERT INTO tracked_channels (channel, tracked_until, updated_at)
-          VALUES ${values}
-          ON CONFLICT(channel) DO UPDATE SET
-            tracked_until = MAX(tracked_channels.tracked_until, excluded.tracked_until),
-            updated_at = excluded.updated_at
-        `,
-        ...bindings
-      );
-    }
-  }
-
-  getTrackedUntil(channels) {
-    const result = new Map();
-
-    // SQLite caps bound parameters at 100, so chunk the IN (...) lookup the same
-    // way getStoredStatuses does for users tracking >100 channels.
-    for (let index = 0; index < channels.length; index += SQL_BIND_LIMIT) {
-      const chunk = channels.slice(index, index + SQL_BIND_LIMIT);
-      const placeholders = chunk.map(() => '?').join(', ');
-      const rows = this.ctx.storage.sql
-        .exec(
-          `
-            SELECT channel, tracked_until
-            FROM tracked_channels
-            WHERE channel IN (${placeholders})
-          `,
-          ...chunk
-        )
-        .toArray();
-
-      for (const row of rows) {
-        result.set(row.channel, row.tracked_until);
-      }
-    }
-
-    return result;
   }
 
   getStoredStatuses(channels) {
@@ -465,6 +387,10 @@ export class TwitchHub extends DurableObject {
 
     const syncedAt = Date.now();
     let liveChannelCount = 0;
+    // How many live rows we actually persisted this tick. With the write-cadence
+    // gate this is normally well below liveChannels — the gap is the write
+    // reduction, surfaced in the cron_sync log so the rollout is observable.
+    let liveWrites = 0;
 
     for (const channel of normalized) {
       if (failedChannels.has(channel)) {
@@ -482,23 +408,35 @@ export class TwitchHub extends DurableObject {
         previousStatus && previousStatus.isLive && previousStatus.payload;
 
       if (nextStatus) {
-        // Live channels are written every sync so the payload (viewer count,
-        // title) stays current. There are only ~16 of 400+, so the write cost
-        // is negligible.
         liveChannelCount += 1;
-        this.ctx.storage.sql.exec(
-          `
-            INSERT INTO channel_status (channel, is_live, payload, last_synced_at)
-            VALUES (?, 1, ?, ?)
-            ON CONFLICT(channel) DO UPDATE SET
-              is_live = 1,
-              payload = excluded.payload,
-              last_synced_at = excluded.last_synced_at
-          `,
-          channel,
-          JSON.stringify(nextStatus),
-          syncedAt
-        );
+
+        // Decide whether to persist this tick. A transition into live always
+        // writes (the row must exist and clients need the LIVE payload). While a
+        // channel stays live we only rewrite when something a client renders
+        // actually changed — title, game, uptime, name, or the *displayed*
+        // viewer count. A stable stream is left untouched rather than rewriting
+        // identical bytes every tick. Skipping a write doesn't make the channel
+        // read stale — lastSyncedAt is bumped above every successful sync, and
+        // the persisted row already holds the current state.
+        const shouldWrite =
+          !wasLive || this.liveStatusChanged(previousStatus, nextStatus);
+
+        if (shouldWrite) {
+          liveWrites += 1;
+          this.ctx.storage.sql.exec(
+            `
+              INSERT INTO channel_status (channel, is_live, payload, last_synced_at)
+              VALUES (?, 1, ?, ?)
+              ON CONFLICT(channel) DO UPDATE SET
+                is_live = 1,
+                payload = excluded.payload,
+                last_synced_at = excluded.last_synced_at
+            `,
+            channel,
+            JSON.stringify(nextStatus),
+            syncedAt
+          );
+        }
 
         if (!wasLive) {
           this.broadcast(channel, {
@@ -539,6 +477,7 @@ export class TwitchHub extends DurableObject {
     return {
       channelsSynced: normalized.length - failedChannels.size,
       liveChannels: liveChannelCount,
+      liveWrites,
       failedChannels: failedChannels.size,
     };
   }
@@ -717,12 +656,49 @@ export class TwitchHub extends DurableObject {
     );
   }
 
-  getTrackingTtlMs() {
+  // True when a field the extension renders differs between the stored payload
+  // and the freshly fetched one, so a rewrite would actually change what a
+  // client sees: title, game, uptime (started_at), display name, login, or the
+  // *displayed* (abbreviated) viewer count. A stable stream returns false and is
+  // left untouched. Missing baseline → true (write, can't reason about it).
+  liveStatusChanged(previousStatus, nextStatus) {
+    const prev = previousStatus?.payload;
+
+    if (!prev) {
+      return true;
+    }
+
     return (
-      getPositiveNumber(
-        this.env.TRACKED_CHANNEL_TTL_SECONDS,
-        DEFAULT_TRACKING_TTL_MS / 1000
-      ) * 1000
+      this.viewersChangedEnough(previousStatus, nextStatus) ||
+      prev.channel?.status !== nextStatus.channel?.status ||
+      prev.game !== nextStatus.game ||
+      prev.created_at !== nextStatus.created_at ||
+      prev.user_name !== nextStatus.user_name ||
+      prev.username !== nextStatus.username
+    );
+  }
+
+  // True when the viewer count moved enough to change the abbreviated label the
+  // popup would render, and the raw move cleared VIEWER_WRITE_FLOOR (so the
+  // exact <1000 range doesn't write on ±1 jitter). Missing baselines (no prior
+  // payload) count as changed so we never suppress a write we can't reason about.
+  viewersChangedEnough(previousStatus, nextStatus) {
+    const previousViewers = previousStatus?.payload?.viewers;
+    const nextViewers = nextStatus?.viewers;
+
+    if (
+      typeof previousViewers !== 'number' ||
+      typeof nextViewers !== 'number'
+    ) {
+      return true;
+    }
+
+    if (Math.abs(nextViewers - previousViewers) < VIEWER_WRITE_FLOOR) {
+      return false;
+    }
+
+    return (
+      abbreviateViewers(previousViewers) !== abbreviateViewers(nextViewers)
     );
   }
 
@@ -785,6 +761,21 @@ export function normalizeChannels(channels) {
         .filter((channel) => TWITCH_LOGIN.test(channel))
     )
   );
+}
+
+// Mirrors abbreviateViewerCount in extension/scripts/pop-up.js: the popup shows
+// exact counts below 1000 and 0.1K / 0.1M abbreviations above, so this is the
+// granularity at which a viewer change becomes visible to the user. Kept in
+// sync with the extension by hand — if the popup's formatting changes, update
+// both. Returns a string so callers compare displayed labels directly.
+function abbreviateViewers(number) {
+  if (number >= 1e6) {
+    return (number / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+  }
+  if (number >= 1e3) {
+    return (number / 1e3).toFixed(1).replace(/\.0$/, '') + 'K';
+  }
+  return String(number);
 }
 
 function getPositiveNumber(rawValue, fallback) {
