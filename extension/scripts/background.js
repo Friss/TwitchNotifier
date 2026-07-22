@@ -143,6 +143,36 @@ const getTrackedUsernames = async () => {
   );
 };
 
+// POST the channel set to the backend, retrying once on a transient failure
+// (network blip, a 5xx, or the response not being JSON). A single retry turns
+// most one-off blips — the usual cause of a blank popup — into a success
+// without waiting for the next poll. Throws if both attempts fail so the caller
+// still falls back to its empty/error path.
+const fetchChannelStatus = async (channels, attempt = 0) => {
+  try {
+    const response = await fetch(API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ channels }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Channel status failed with ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    if (attempt === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 750));
+      return fetchChannelStatus(channels, attempt + 1);
+    }
+    throw error;
+  }
+};
+
 const fetchStreamerStatus = async (
   usernames,
   callback,
@@ -161,23 +191,19 @@ const fetchStreamerStatus = async (
   }
 
   try {
-    const response = await fetch(API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({
-        channels: normalizedUsernames,
-      }),
-    });
+    const streamersLive = await fetchChannelStatus(normalizedUsernames);
 
-    if (!response.ok) {
-      throw new Error(`Channel status failed with ${response.status}`);
+    // When the realtime socket is open it is authoritative for
+    // knownOnlineStreamers (LIVE/OFFLINE deltas plus the SNAPSHOT reconcile).
+    // This HTTP response can be served from the worker's short-lived isolate
+    // cache and may lag a transition the socket has already applied, so
+    // reconciling from it here would clobber newer realtime state — dropping a
+    // just-live channel or resurrecting a just-offline one. Keep the HTTP fetch
+    // display-only while the socket carries updates; only reconcile from it
+    // when the socket isn't (cold start, socket down, or old poll-only clients).
+    if (!webSocket || webSocket.readyState !== WebSocket.OPEN) {
+      await syncKnownOnlineStreamers(streamersLive, sendNotification);
     }
-
-    const streamersLive = await response.json();
-    await syncKnownOnlineStreamers(streamersLive, sendNotification);
 
     if (callback) {
       callback(

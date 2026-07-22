@@ -3,7 +3,7 @@ import { TwitchHub, normalizeChannels } from './twitch_hub.js';
 export { TwitchHub };
 
 const HUB_NAME = 'global';
-const VERSION = '3.4.0';
+const VERSION = '3.6.0';
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
@@ -15,6 +15,33 @@ const JSON_HEADERS = {
   'Content-Type': 'application/json',
   'Cache-Control': 'no-store',
 };
+
+// Per-isolate, per-channel cache of the last status served, in front of the
+// single global Durable Object. Polling clients overlap heavily on popular
+// channels, so this sheds repeat getChannelStatus RPCs off the DO — the exact
+// path that saturated it under load. Best-effort only: isolates are ephemeral
+// and many, so hit rate scales with how much traffic an isolate sees.
+//
+// TTL is kept well under the DO's ~30min tracking TTL: a channel that's polled
+// continuously still reaches the DO (and re-arms its tracking heartbeat) at
+// least once per CHANNEL_CACHE_TTL_MS, so caching never lets a channel fall out
+// of tracking. It's also <= the DO's own status TTL so we never serve staler
+// than the DO would. A null entry is a live-negative (offline/unknown), cached
+// so the 400+ offline channels don't miss on every request.
+const CHANNEL_CACHE_TTL_MS = 30_000;
+// Sweep expired entries once the map crosses this size so a long-lived isolate
+// can't accumulate stale channels without bound. Entries are tiny, so the cap
+// is generous.
+const CHANNEL_CACHE_MAX_ENTRIES = 5000;
+const channelStatusCache = new Map();
+
+function pruneChannelCache(now) {
+  for (const [channel, entry] of channelStatusCache) {
+    if (entry.expiresAt <= now) {
+      channelStatusCache.delete(channel);
+    }
+  }
+}
 
 export default {
   async fetch(request, env, ctx) {
@@ -84,6 +111,7 @@ export default {
         .syncTrackedChannels({
           cron: controller.cron,
           scheduledTime: controller.scheduledTime,
+          version: VERSION,
         })
         .then((result) => {
           console.log('cron_sync', result);
@@ -105,9 +133,40 @@ async function handleChannelStatus(request, env) {
     return jsonResponse({});
   }
 
-  const response = await getHubStub(env).getChannelStatus(channels, {
-    refreshIfStale: true,
+  const now = Date.now();
+  if (channelStatusCache.size > CHANNEL_CACHE_MAX_ENTRIES) {
+    pruneChannelCache(now);
+  }
+  // Split into channels we can serve from the isolate cache vs. those we must
+  // ask the DO for (missing or expired). Only the latter become an RPC.
+  const toFetch = channels.filter((channel) => {
+    const entry = channelStatusCache.get(channel);
+    return entry === undefined || entry.expiresAt <= now;
   });
+
+  if (toFetch.length > 0) {
+    const fetched = await getHubStub(env).getChannelStatus(toFetch, {
+      refreshIfStale: true,
+    });
+    const expiresAt = now + CHANNEL_CACHE_TTL_MS;
+    // buildResponse omits offline channels, so anything in toFetch that isn't
+    // in the result is offline/unknown — cache it as a null so it doesn't miss
+    // every request.
+    for (const channel of toFetch) {
+      channelStatusCache.set(channel, {
+        payload: fetched[channel] ?? null,
+        expiresAt,
+      });
+    }
+  }
+
+  const response = {};
+  for (const channel of channels) {
+    const entry = channelStatusCache.get(channel);
+    if (entry && entry.payload) {
+      response[channel] = entry.payload;
+    }
+  }
 
   return jsonResponse(response);
 }
