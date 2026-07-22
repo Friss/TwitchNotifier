@@ -143,6 +143,36 @@ const getTrackedUsernames = async () => {
   );
 };
 
+// POST the channel set to the backend, retrying once on a transient failure
+// (network blip, a 5xx, or the response not being JSON). A single retry turns
+// most one-off blips — the usual cause of a blank popup — into a success
+// without waiting for the next poll. Throws if both attempts fail so the caller
+// still falls back to its empty/error path.
+const fetchChannelStatus = async (channels, attempt = 0) => {
+  try {
+    const response = await fetch(API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ channels }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Channel status failed with ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    if (attempt === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 750));
+      return fetchChannelStatus(channels, attempt + 1);
+    }
+    throw error;
+  }
+};
+
 const fetchStreamerStatus = async (
   usernames,
   callback,
@@ -161,22 +191,7 @@ const fetchStreamerStatus = async (
   }
 
   try {
-    const response = await fetch(API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({
-        channels: normalizedUsernames,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Channel status failed with ${response.status}`);
-    }
-
-    const streamersLive = await response.json();
+    const streamersLive = await fetchChannelStatus(normalizedUsernames);
     await syncKnownOnlineStreamers(streamersLive, sendNotification);
 
     if (callback) {

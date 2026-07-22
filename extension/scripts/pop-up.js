@@ -23,7 +23,7 @@ let hideOffline = false;
 let hidePreviews = false;
 let hideStreamersOnlineCount = false;
 
-const fetchStreamerStatus = (storage) => {
+const fetchStreamerStatus = (storage, isRetry = false) => {
   if (!storage.twitchStreams) {
     storage.twitchStreams = [];
     chrome.storage.sync.set({ twitchStreams: storage.twitchStreams }, () => {});
@@ -37,20 +37,39 @@ const fetchStreamerStatus = (storage) => {
     chrome.storage.sync.set({ twitchStreams: validStreams }, () => {});
   }
 
-  if (storage.twitchStreams.length) {
-    chrome.runtime
-      .sendMessage({
-        action: 'fetchStreamerStatus',
-        usernames: Array.from(
-          new Set(storage.twitchStreams.map((s) => s.toLowerCase()))
-        ),
-      })
-      .then((response) => {
-        displayStreamerStatus(response);
-      });
-  } else {
+  if (!storage.twitchStreams.length) {
     displayStreamerStatus();
+    return;
   }
+
+  // A successful backend fetch returns one entry per tracked username (offline
+  // channels come back as { username }), so an empty array or a rejected
+  // message means the background's fetch failed — most often a transient blip
+  // or the MV3 service worker waking up. Retry once (the spinner stays up),
+  // then show an error state rather than rendering a blank popup.
+  const onFailure = () => {
+    if (!isRetry) {
+      setTimeout(() => fetchStreamerStatus(storage, true), 1500);
+    } else {
+      displayStreamerStatus(null, true);
+    }
+  };
+
+  chrome.runtime
+    .sendMessage({
+      action: 'fetchStreamerStatus',
+      usernames: Array.from(
+        new Set(storage.twitchStreams.map((s) => s.toLowerCase()))
+      ),
+    })
+    .then((response) => {
+      if (Array.isArray(response) && response.length > 0) {
+        displayStreamerStatus(response);
+      } else {
+        onFailure();
+      }
+    })
+    .catch(onFailure);
 };
 
 const updateSetBadgeText = (setBadgeText) => {
@@ -144,24 +163,42 @@ const createStreamerEntry = (stream) => {
   }
 };
 
-const displayStreamerStatus = (streams) => {
+const displayStreamerStatus = (streams, failed = false) => {
   document.getElementById('loading').classList.add('hidden');
+  const emptyState = document.getElementById('emptyState');
+  const errorState = document.getElementById('errorState');
 
+  // Fetch failed: surface an error rather than a blank popup, and leave any
+  // previously rendered list in place so the user keeps seeing last-known state.
+  if (failed) {
+    emptyState.classList.add('hidden');
+    errorState.classList.remove('hidden');
+    return;
+  }
+  errorState.classList.add('hidden');
+
+  // No argument means there are no tracked channels (the genuine empty state),
+  // distinct from a fetch that came back empty (handled as a failure above).
   if (!streams) {
-    document.getElementById('emptyState').classList.remove('hidden');
+    emptyState.classList.remove('hidden');
     return;
   }
 
-  document.getElementById('emptyState').classList.add('hidden');
-  document.getElementById('streamers').innerHTML = '';
+  emptyState.classList.add('hidden');
+  const list = document.getElementById('streamers');
+  list.innerHTML = '';
 
   streams.sort(sortStreams).forEach((stream) => {
-    const html = createStreamerEntry(stream);
-
-    const entry = document.createElement('li');
-    entry.innerHTML = html;
-    entry.setAttribute('data-username', stream.username);
-    document.getElementById('streamers').appendChild(entry);
+    // Isolate each entry: a single malformed payload must not throw out of the
+    // loop and leave the whole popup blank.
+    try {
+      const entry = document.createElement('li');
+      entry.innerHTML = createStreamerEntry(stream);
+      entry.setAttribute('data-username', stream.username);
+      list.appendChild(entry);
+    } catch (error) {
+      console.error('Render error', stream && stream.username, error);
+    }
   });
 };
 
