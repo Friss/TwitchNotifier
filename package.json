@@ -4,6 +4,7 @@
   "description": "Twitch notifier chrome extension",
   "main": "index.js",
   "scripts": {
+    "test": "node --test tests/*.test.cjs",
     "format": "prettier --write . --ignore-unknown",
     "format:check": "prettier --check . --ignore-unknown",
     "worker:dev": "yarn --cwd worker dev",

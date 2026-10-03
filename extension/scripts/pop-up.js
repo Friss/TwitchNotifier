@@ -23,6 +23,33 @@ let hideOffline = false;
 let hidePreviews = false;
 let hideStreamersOnlineCount = false;
 
+// Two background fetch attempts can take 20s plus the 750ms retry delay. Allow
+// them to finish, but also bound a missing response from the MV3 worker itself.
+const CHANNEL_STATUS_MESSAGE_TIMEOUT_MS = 25000;
+
+const requestStreamerStatus = async (usernames) => {
+  let timeout;
+
+  try {
+    return await Promise.race([
+      chrome.runtime.sendMessage({
+        action: 'fetchStreamerStatus',
+        usernames,
+      }),
+      new Promise((resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error('Streamer status response timed out')),
+          CHANNEL_STATUS_MESSAGE_TIMEOUT_MS
+        );
+      }),
+    ]);
+  } finally {
+    // Settling the race also makes late replies harmless: they cannot render
+    // over the retry's result or the error state.
+    clearTimeout(timeout);
+  }
+};
+
 const fetchStreamerStatus = (storage, isRetry = false) => {
   if (!storage.twitchStreams) {
     storage.twitchStreams = [];
@@ -55,13 +82,9 @@ const fetchStreamerStatus = (storage, isRetry = false) => {
     }
   };
 
-  chrome.runtime
-    .sendMessage({
-      action: 'fetchStreamerStatus',
-      usernames: Array.from(
-        new Set(storage.twitchStreams.map((s) => s.toLowerCase()))
-      ),
-    })
+  requestStreamerStatus(
+    Array.from(new Set(storage.twitchStreams.map((s) => s.toLowerCase())))
+  )
     .then((response) => {
       if (Array.isArray(response) && response.length > 0) {
         displayStreamerStatus(response);

@@ -1,5 +1,6 @@
 const API_BASE_URL = 'https://twitch.theorycraft.gg';
 const API_URL = `${API_BASE_URL}/channel-status`;
+const CHANNEL_STATUS_TIMEOUT_MS = 10000;
 const WS_URL = 'wss://twitch.theorycraft.gg/ws';
 const BACKGROUND_ALARM_NAME = 'backgroundFetch';
 const BACKGROUND_POLL_MINUTES = 5;
@@ -150,6 +151,24 @@ const getTrackedUsernames = async () => {
 // still falls back to its empty/error path.
 const fetchChannelStatus = async (channels, attempt = 0) => {
   try {
+    return await fetchChannelStatusAttempt(channels);
+  } catch (error) {
+    if (attempt === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 750));
+      return fetchChannelStatus(channels, attempt + 1);
+    }
+    throw error;
+  }
+};
+
+const fetchChannelStatusAttempt = async (channels) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    CHANNEL_STATUS_TIMEOUT_MS
+  );
+
+  try {
     const response = await fetch(API_URL, {
       method: 'POST',
       headers: {
@@ -157,6 +176,7 @@ const fetchChannelStatus = async (channels, attempt = 0) => {
         Accept: 'application/json',
       },
       body: JSON.stringify({ channels }),
+      signal: controller.signal,
     });
 
     if (!response.ok) {
@@ -164,12 +184,10 @@ const fetchChannelStatus = async (channels, attempt = 0) => {
     }
 
     return await response.json();
-  } catch (error) {
-    if (attempt === 0) {
-      await new Promise((resolve) => setTimeout(resolve, 750));
-      return fetchChannelStatus(channels, attempt + 1);
-    }
-    throw error;
+  } finally {
+    // Keep the deadline active while reading the body too: receiving headers
+    // does not guarantee that response.json() will ever finish.
+    clearTimeout(timeout);
   }
 };
 
