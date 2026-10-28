@@ -103,9 +103,8 @@ export default {
 
   async scheduled(controller, env, ctx) {
     const stub = getHubStub(env);
-    // Log the per-tick outcome so the realtime cron is observable during the
-    // rollout: active sessions, channels synced (≈ Twitch req/min), live count,
-    // failed batches, and whether the tick was a no-op (no sessions connected).
+    // Keep an hourly health snapshot without logging every successful tick.
+    // Use scheduled time so delayed execution still selects the hourly tick.
     ctx.waitUntil(
       stub
         .syncTrackedChannels({
@@ -114,7 +113,11 @@ export default {
           version: VERSION,
         })
         .then((result) => {
-          console.log('cron_sync', result);
+          if (result.failed || result.failedChannels > 0) {
+            console.warn('cron_sync_failed', result);
+          } else if (new Date(controller.scheduledTime).getUTCMinutes() === 0) {
+            console.log('cron_sync', result);
+          }
         })
         .catch((error) => {
           console.error('cron_sync_error', {
