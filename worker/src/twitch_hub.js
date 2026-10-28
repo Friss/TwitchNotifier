@@ -4,6 +4,15 @@ const STREAMS_URI = 'https://api.twitch.tv/helix/streams?first=100';
 const DEFAULT_CLIENT_ID = 'kimne78kx3ncx6brgo4mv6wki5h1ko';
 const TOKEN_CACHE_KEY = 'twitch_auth_token';
 const DEFAULT_STATUS_TTL_MS = 60_000;
+const ROUTINE_LOG_SAMPLE_RATE = 0.01;
+
+// Sample routine events in code so warnings and errors remain unsampled.
+function logRoutineEvent(event, fields) {
+  if (Math.random() < ROUTINE_LOG_SAMPLE_RATE) {
+    console.log(event, { ...fields, sampleRate: ROUTINE_LOG_SAMPLE_RATE });
+  }
+}
+
 // A still-live channel is only rewritten when its viewer count moves
 // enough to change the number the popup actually displays — there's no point
 // persisting a change the user can't see. The popup abbreviates to 0.1K / 0.1M
@@ -82,7 +91,7 @@ export class TwitchHub extends DurableObject {
     server.serializeAttachment({ channels: [] });
     this.sessions.set(server, new Set());
 
-    console.log('ws_connect', { sessions: this.sessions.size });
+    logRoutineEvent('ws_connect', { sessions: this.sessions.size });
 
     return new Response(null, {
       status: 101,
@@ -188,7 +197,7 @@ export class TwitchHub extends DurableObject {
     this.sessions.set(ws, new Set(channels));
     ws.serializeAttachment({ channels });
 
-    console.log('ws_subscribe', {
+    logRoutineEvent('ws_subscribe', {
       channels: channels.length,
       sessions: this.sessions.size,
     });
@@ -222,12 +231,12 @@ export class TwitchHub extends DurableObject {
 
   async webSocketClose(ws) {
     this.sessions.delete(ws);
-    console.log('ws_close', { sessions: this.sessions.size });
+    logRoutineEvent('ws_close', { sessions: this.sessions.size });
   }
 
   async webSocketError(ws) {
     this.sessions.delete(ws);
-    console.log('ws_error', { sessions: this.sessions.size });
+    console.warn('ws_error', { sessions: this.sessions.size });
   }
 
   initializeSchema() {
@@ -389,7 +398,7 @@ export class TwitchHub extends DurableObject {
     let liveChannelCount = 0;
     // How many live rows we actually persisted this tick. With the write-cadence
     // gate this is normally well below liveChannels — the gap is the write
-    // reduction, surfaced in the cron_sync log so the rollout is observable.
+    // reduction, surfaced in the hourly cron_sync snapshot.
     let liveWrites = 0;
 
     for (const channel of normalized) {
@@ -739,9 +748,9 @@ export class TwitchHub extends DurableObject {
       }
     }
 
-    // Confirms LIVE/OFFLINE transitions are actually delivered. recipients: 0
-    // means the transition fired but no connected session was subscribed.
-    console.log('ws_broadcast', {
+    // Sample delivery diagnostics. recipients: 0 means no connected session
+    // was subscribed to this transition.
+    logRoutineEvent('ws_broadcast', {
       type: message.type,
       channel,
       recipients,
